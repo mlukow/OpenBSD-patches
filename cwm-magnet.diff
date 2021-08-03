@@ -1,0 +1,180 @@
+Index: calmwm.h
+===================================================================
+RCS file: /cvs/xenocara/app/cwm/calmwm.h,v
+retrieving revision 1.375
+diff -u -p -r1.375 calmwm.h
+--- calmwm.h	16 Apr 2020 13:32:35 -0000	1.375
++++ calmwm.h	1 Aug 2021 10:28:00 -0000
+@@ -483,6 +483,7 @@ void			 kbfunc_ptrmove(void *, struct ca
+ void			 kbfunc_client_snap(void *, struct cargs *);
+ void			 kbfunc_client_move(void *, struct cargs *);
+ void			 kbfunc_client_resize(void *, struct cargs *);
++void			 kbfunc_client_tile(void *, struct cargs *);
+ void			 kbfunc_client_close(void *, struct cargs *);
+ void			 kbfunc_client_lower(void *, struct cargs *);
+ void			 kbfunc_client_raise(void *, struct cargs *);
+Index: conf.c
+===================================================================
+RCS file: /cvs/xenocara/app/cwm/conf.c,v
+retrieving revision 1.252
+diff -u -p -r1.252 conf.c
+--- conf.c	16 Apr 2020 13:32:35 -0000	1.252
++++ conf.c	1 Aug 2021 10:28:00 -0000
+@@ -102,6 +102,7 @@ static const struct {
+ 	{ FUNC_CC(window-movetogroup-7, client_movetogroup, 7) },
+ 	{ FUNC_CC(window-movetogroup-8, client_movetogroup, 8) },
+ 	{ FUNC_CC(window-movetogroup-9, client_movetogroup, 9) },
++	{ FUNC_CC(window-center, client_snap, 0) },
+ 	{ FUNC_CC(window-snap-up, client_snap, (CWM_UP)) },
+ 	{ FUNC_CC(window-snap-down, client_snap, (CWM_DOWN)) },
+ 	{ FUNC_CC(window-snap-right, client_snap, (CWM_RIGHT)) },
+@@ -128,6 +129,14 @@ static const struct {
+ 	{ FUNC_CC(window-resize-down-big, client_resize, (CWM_DOWN_BIG)) },
+ 	{ FUNC_CC(window-resize-right-big, client_resize, (CWM_RIGHT_BIG)) },
+ 	{ FUNC_CC(window-resize-left-big, client_resize, (CWM_LEFT_BIG)) },
++	{ FUNC_CC(window-tile-up, client_tile, (CWM_UP)) },
++	{ FUNC_CC(window-tile-down, client_tile, (CWM_DOWN)) },
++	{ FUNC_CC(window-tile-left, client_tile, (CWM_LEFT)) },
++	{ FUNC_CC(window-tile-right, client_tile, (CWM_RIGHT)) },
++	{ FUNC_CC(window-tile-up-left, client_tile, (CWM_UP_LEFT)) },
++	{ FUNC_CC(window-tile-up-right, client_tile, (CWM_UP_RIGHT)) },
++	{ FUNC_CC(window-tile-down-left, client_tile, (CWM_DOWN_LEFT)) },
++	{ FUNC_CC(window-tile-down-right, client_tile, (CWM_DOWN_RIGHT)) },
+ 	{ FUNC_CC(window-menu-label, client_menu_label, 0) },
+ 
+ 	{ FUNC_SC(window-cycle, client_cycle, (CWM_CYCLE_FORWARD)) },
+Index: cwmrc.5
+===================================================================
+RCS file: /cvs/xenocara/app/cwm/cwmrc.5,v
+retrieving revision 1.76
+diff -u -p -r1.76 cwmrc.5
+--- cwmrc.5	16 Apr 2020 13:32:35 -0000	1.76
++++ cwmrc.5	1 Aug 2021 10:28:00 -0000
+@@ -411,6 +411,24 @@ Snap window to top-left corner.
+ Snap window to bottom-right corner.
+ .It window-snap-down-left
+ Snap window to bottom-left corner.
++.It window-tile-up
++Fill the top half of the screen with the window.
++.It window-tile-down
++Fill the bottom half of the screen with the window.
++.It window-tile-left
++Fill the left half of the screen with the window.
++.It window-tile-right
++Fill the right half of the screen with the window.
++.It window-tile-up-left
++Fill the top left quarter of the screen with the window.
++.It window-tile-up-right
++Fill the top right quarter of the screen with the window.
++.It window-tile-down-left
++Fill the down left quarter of the screen with the window.
++.It window-tile-down-right
++Fill the down right quarter of the screen with the window.
++.It window-center
++Centers the window on the screen.
+ .It pointer-move-up
+ Move pointer
+ .Ar moveamount
+Index: kbfunc.c
+===================================================================
+RCS file: /cvs/xenocara/app/cwm/kbfunc.c,v
+retrieving revision 1.170
+diff -u -p -r1.170 kbfunc.c
+--- kbfunc.c	20 Mar 2020 18:50:08 -0000	1.170
++++ kbfunc.c	1 Aug 2021 10:28:00 -0000
+@@ -301,28 +301,77 @@ kbfunc_client_snap(void *ctx, struct car
+ 	    cc->geom.y + cc->geom.h / 2, 1);
+ 
+ 	flags = cargs->flag;
+-	while (flags) {
+-		if (flags & CWM_UP) {
+-			cc->geom.y = area.y;
+-			flags &= ~CWM_UP;
+-		}
+-		if (flags & CWM_LEFT) {
+-			cc->geom.x = area.x;
+-			flags &= ~CWM_LEFT;
+-		}
+-		if (flags & CWM_RIGHT) {
+-			cc->geom.x = area.x + area.w - cc->geom.w -
+-			    (cc->bwidth * 2);
+-			flags &= ~CWM_RIGHT;
+-		}
+-		if (flags & CWM_DOWN) {
+-			cc->geom.y = area.y + area.h - cc->geom.h -
+-			    (cc->bwidth * 2);
+-			flags &= ~CWM_DOWN;
++
++	if (flags) {
++		while (flags) {
++			if (flags & CWM_UP) {
++				cc->geom.y = area.y;
++				flags &= ~CWM_UP;
++			}
++			if (flags & CWM_LEFT) {
++				cc->geom.x = area.x;
++				flags &= ~CWM_LEFT;
++			}
++			if (flags & CWM_RIGHT) {
++				cc->geom.x = area.x + area.w - cc->geom.w -
++					(cc->bwidth * 2);
++				flags &= ~CWM_RIGHT;
++			}
++			if (flags & CWM_DOWN) {
++				cc->geom.y = area.y + area.h - cc->geom.h -
++					(cc->bwidth * 2);
++				flags &= ~CWM_DOWN;
++			}
+ 		}
++	} else {
++		cc->geom.x = (sc->work.w - cc->geom.w) / 2 - cc->bwidth;
++		cc->geom.y = (sc->work.h - cc->geom.h) / 2 - cc->bwidth;
++	}
++
++	client_move(cc);
++	client_ptr_inbound(cc, 1);
++}
++
++void
++kbfunc_client_tile(void *ctx, struct cargs *cargs)
++{
++	struct client_ctx *cc = ctx;
++	struct screen_ctx *sc = cc->sc;
++	struct geom area;
++	int flags;
++
++	area = screen_area(sc,
++	    cc->geom.x + cc->geom.w / 2,
++	    cc->geom.y + cc->geom.h / 2, 1);
++
++	flags = cargs->flag;
++
++	if (flags & CWM_UP) {
++		cc->geom.y = area.y;
++		cc->geom.h = area.h / 2 - (cc->bwidth * 2);
++	} else if (flags & CWM_DOWN) {
++		cc->geom.y = area.y + area.h / 2;
++		cc->geom.h = area.h / 2 - (cc->bwidth * 2);
++	} else {
++		cc->geom.y = area.y;
++		cc->geom.h = area.h - (cc->bwidth * 2);
++	}
++
++	if (flags & CWM_LEFT) {
++		cc->geom.x = area.x;
++		cc->geom.w = area.w / 2 - (cc->bwidth * 2);
++	} else if (flags & CWM_RIGHT) {
++		cc->geom.x = area.x + area.w / 2;
++		cc->geom.w = area.w / 2 - (cc->bwidth * 2);
++	} else {
++		cc->geom.x = area.x;
++		cc->geom.w = area.w - (cc->bwidth * 2);
+ 	}
++
++	client_resize(cc, 1);
+ 	client_move(cc);
+ 	client_ptr_inbound(cc, 1);
++	XSync(X_Dpy, True);
+ }
+ 
+ void

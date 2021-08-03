@@ -1,0 +1,470 @@
+Index: c_test.c
+===================================================================
+RCS file: /cvs/src/bin/ksh/c_test.c,v
+retrieving revision 1.27
+diff -u -p -r1.27 c_test.c
+--- c_test.c	28 Jun 2019 13:34:59 -0000	1.27
++++ c_test.c	2 Aug 2021 19:24:59 -0000
+@@ -288,11 +288,11 @@ test_eval(Test_env *te, Test_op op, cons
+ 	 */
+ 	case TO_STEQL: /* = */
+ 		if (te->flags & TEF_DBRACKET)
+-			return gmatch(opnd1, opnd2, false);
++			return gmatch(opnd1, opnd2, false, true);
+ 		return strcmp(opnd1, opnd2) == 0;
+ 	case TO_STNEQ: /* != */
+ 		if (te->flags & TEF_DBRACKET)
+-			return !gmatch(opnd1, opnd2, false);
++			return !gmatch(opnd1, opnd2, false, true);
+ 		return strcmp(opnd1, opnd2) != 0;
+ 	case TO_STLT: /* < */
+ 		return strcmp(opnd1, opnd2) < 0;
+Index: edit.c
+===================================================================
+RCS file: /cvs/src/bin/ksh/edit.c,v
+retrieving revision 1.69
+diff -u -p -r1.69 edit.c
+--- edit.c	28 Jun 2019 13:34:59 -0000	1.69
++++ edit.c	2 Aug 2021 19:24:59 -0000
+@@ -291,8 +291,7 @@ x_do_comment(char *buf, int bsize, int *
+ 
+ static char	*add_glob(const char *str, int slen);
+ static void	glob_table(const char *pat, XPtrV *wp, struct table *tp);
+-static void	glob_path(int flags, const char *pat, XPtrV *wp,
+-				const char *path);
++static void	glob_path(int flags, const char *pat, XPtrV *wp, const char *path);
+ 
+ void
+ x_print_expansions(int nwords, char *const *words, int is_command)
+@@ -376,7 +375,7 @@ x_file_glob(int flags, const char *str, 
+ 	}
+ 	source = sold;
+ 	XPinit(w, 32);
+-	expand(yylval.cp, &w, DOGLOB|DOTILDE|DOMARKDIRS);
++	expand(yylval.cp, &w, DOGLOB|DOTILDE|DOMARKDIRS, Flag(FIGNORECASE));
+ 	XPput(w, NULL);
+ 	words = (char **) XPclose(w);
+ 
+@@ -804,7 +803,7 @@ glob_table(const char *pat, XPtrV *wp, s
+ 	struct tbl *te;
+ 
+ 	for (ktwalk(&ts, tp); (te = ktnext(&ts)); ) {
+-		if (gmatch(te->name, pat, false))
++		if (gmatch(te->name, pat, false, Flag(FIGNORECASE)))
+ 			XPput(*wp, str_save(te->name, ATEMP));
+ 	}
+ }
+@@ -849,7 +848,7 @@ glob_path(int flags, const char *pat, XP
+ 		memcpy(xp, pat, patlen);
+ 
+ 		oldsize = XPsize(*wp);
+-		glob_str(Xstring(xs, xp), wp, 1); /* mark dirs */
++		glob_str(Xstring(xs, xp), wp, 1, Flag(FIGNORECASE)); /* mark dirs */
+ 		newsize = XPsize(*wp);
+ 
+ 		/* Check that each match is executable... */
+Index: eval.c
+===================================================================
+RCS file: /cvs/src/bin/ksh/eval.c,v
+retrieving revision 1.66
+diff -u -p -r1.66 eval.c
+--- eval.c	13 Sep 2020 15:39:09 -0000	1.66
++++ eval.c	2 Aug 2021 19:24:59 -0000
+@@ -53,12 +53,12 @@ typedef struct Expand {
+ static	int	varsub(Expand *, char *, char *, int *, int *);
+ static	int	comsub(Expand *, char *);
+ static	char   *trimsub(char *, char *, int);
+-static	void	glob(char *, XPtrV *, int);
+-static	void	globit(XString *, char **, char *, XPtrV *, int);
++static	void	glob(char *, XPtrV *, int, int);
++static	void	globit(XString *, char **, char *, XPtrV *, int, int);
+ static char	*maybe_expand_tilde(char *, XString *, char **, int);
+ static	char   *tilde(char *);
+ static	char   *homedir(char *);
+-static void	alt_expand(XPtrV *, char *, char *, char *, int);
++static void	alt_expand(XPtrV *, char *, char *, char *, int, int);
+ 
+ static struct tbl *varcpy(struct tbl *);
+ 
+@@ -95,7 +95,7 @@ eval(char **ap, int f)
+ 	XPinit(w, 32);
+ 	XPput(w, NULL);		/* space for shell name */
+ 	while (*ap != NULL)
+-		expand(*ap++, &w, f);
++		expand(*ap++, &w, f, true);
+ 	XPput(w, NULL);
+ 	return (char **) XPclose(w) + 1;
+ }
+@@ -109,7 +109,7 @@ evalstr(char *cp, int f)
+ 	XPtrV w;
+ 
+ 	XPinit(w, 1);
+-	expand(cp, &w, f);
++	expand(cp, &w, f, true);
+ 	cp = (XPsize(w) == 0) ? null : (char*) *XPptrv(w);
+ 	XPfree(w);
+ 	return cp;
+@@ -125,7 +125,7 @@ evalonestr(char *cp, int f)
+ 	XPtrV w;
+ 
+ 	XPinit(w, 1);
+-	expand(cp, &w, f);
++	expand(cp, &w, f, true);
+ 	switch (XPsize(w)) {
+ 	case 0:
+ 		cp = null;
+@@ -155,7 +155,8 @@ typedef struct SubType {
+ void
+ expand(char *cp,	/* input word */
+     XPtrV *wp,		/* output words */
+-    int f)		/* DO* flags */
++    int f,			/* DO* flags */
++	int ignorecase)
+ {
+ 	int c = 0;
+ 	int type;		/* expansion type */
+@@ -600,9 +601,9 @@ expand(char *cp,	/* input word */
+ 					/* also does globbing */
+ 					alt_expand(wp, p, p,
+ 					    p + Xlength(ds, (dp - 1)),
+-					    fdo | (f & DOMARKDIRS));
++					    fdo | (f & DOMARKDIRS), ignorecase);
+ 				else if (fdo & DOGLOB)
+-					glob(p, wp, f & DOMARKDIRS);
++					glob(p, wp, f & DOMARKDIRS, ignorecase);
+ 				else if ((f & DOPAT) || !(fdo & DOMAGIC_))
+ 					XPput(*wp, p);
+ 				else
+@@ -944,7 +945,7 @@ trimsub(char *str, char *pat, int how)
+ 	case '#':		/* shortest at beginning */
+ 		for (p = str; p <= end; p++) {
+ 			c = *p; *p = '\0';
+-			if (gmatch(str, pat, false)) {
++			if (gmatch(str, pat, false, true)) {
+ 				*p = c;
+ 				return p;
+ 			}
+@@ -954,7 +955,7 @@ trimsub(char *str, char *pat, int how)
+ 	case '#'|0x80:	/* longest match at beginning */
+ 		for (p = end; p >= str; p--) {
+ 			c = *p; *p = '\0';
+-			if (gmatch(str, pat, false)) {
++			if (gmatch(str, pat, false, true)) {
+ 				*p = c;
+ 				return p;
+ 			}
+@@ -963,13 +964,13 @@ trimsub(char *str, char *pat, int how)
+ 		break;
+ 	case '%':		/* shortest match at end */
+ 		for (p = end; p >= str; p--) {
+-			if (gmatch(p, pat, false))
++			if (gmatch(p, pat, false, true))
+ 				return str_nsave(str, p - str, ATEMP);
+ 		}
+ 		break;
+ 	case '%'|0x80:	/* longest match at end */
+ 		for (p = str; p <= end; p++) {
+-			if (gmatch(p, pat, false))
++			if (gmatch(p, pat, false, true))
+ 				return str_nsave(str, p - str, ATEMP);
+ 		}
+ 		break;
+@@ -985,11 +986,11 @@ trimsub(char *str, char *pat, int how)
+ 
+ /* XXX cp not const 'cause slashes are temporarily replaced with nulls... */
+ static void
+-glob(char *cp, XPtrV *wp, int markdirs)
++glob(char *cp, XPtrV *wp, int markdirs, int ignorecase)
+ {
+ 	int oldsize = XPsize(*wp);
+ 
+-	if (glob_str(cp, wp, markdirs) == 0)
++	if (glob_str(cp, wp, markdirs, ignorecase) == 0)
+ 		XPput(*wp, debunk(cp, cp, strlen(cp) + 1));
+ 	else
+ 		qsortp(XPptrv(*wp) + oldsize, (size_t)(XPsize(*wp) - oldsize),
+@@ -1005,14 +1006,14 @@ glob(char *cp, XPtrV *wp, int markdirs)
+  * the number of matches found.
+  */
+ int
+-glob_str(char *cp, XPtrV *wp, int markdirs)
++glob_str(char *cp, XPtrV *wp, int markdirs, int ignorecase)
+ {
+ 	int oldsize = XPsize(*wp);
+ 	XString xs;
+ 	char *xp;
+ 
+ 	Xinit(xs, xp, 256, ATEMP);
+-	globit(&xs, &xp, cp, wp, markdirs ? GF_MARKDIR : GF_NONE);
++	globit(&xs, &xp, cp, wp, markdirs ? GF_MARKDIR : GF_NONE, ignorecase);
+ 	Xfree(xs, xp);
+ 
+ 	return XPsize(*wp) - oldsize;
+@@ -1023,7 +1024,8 @@ globit(XString *xs,	/* dest string */
+     char **xpp,		/* ptr to dest end */
+     char *sp,		/* source path */
+     XPtrV *wp,		/* output list */
+-    int check)		/* GF_* flags */
++    int check,		/* GF_* flags */
++	int ignorecase)
+ {
+ 	char *np;		/* next source component */
+ 	char *xp = *xpp;
+@@ -1104,7 +1106,7 @@ globit(XString *xs,	/* dest string */
+ 		debunk(xp, sp, Xnleft(*xs, xp));
+ 		xp += strlen(xp);
+ 		*xpp = xp;
+-		globit(xs, xpp, np, wp, check);
++		globit(xs, xpp, np, wp, check, ignorecase);
+ 	} else {
+ 		DIR *dirp;
+ 		struct dirent *d;
+@@ -1123,7 +1125,7 @@ globit(XString *xs,	/* dest string */
+ 			    (name[1] == 0 || (name[1] == '.' && name[2] == 0)))
+ 				continue; /* always ignore . and .. */
+ 			if ((*name == '.' && *sp != '.') ||
+-			    !gmatch(name, sp, true))
++			    !gmatch(name, sp, true, ignorecase))
+ 				continue;
+ 
+ 			len = strlen(d->d_name) + 1;
+@@ -1132,7 +1134,8 @@ globit(XString *xs,	/* dest string */
+ 			*xpp = xp + len - 1;
+ 			globit(xs, xpp, np, wp,
+ 				(check & GF_MARKDIR) | GF_GLOBBED
+-				| (np ? GF_EXCHECK : GF_NONE));
++				| (np ? GF_EXCHECK : GF_NONE),
++				ignorecase);
+ 			xp = Xstring(*xs, xp) + prefix_len;
+ 		}
+ 		closedir(dirp);
+@@ -1258,7 +1261,8 @@ homedir(char *name)
+ }
+ 
+ static void
+-alt_expand(XPtrV *wp, char *start, char *exp_start, char *end, int fdo)
++alt_expand(XPtrV *wp, char *start, char *exp_start, char *end, int fdo,
++				int ignorecase)
+ {
+ 	int count = 0;
+ 	char *brace_start, *brace_end, *comma = NULL;
+@@ -1292,14 +1296,14 @@ alt_expand(XPtrV *wp, char *start, char 
+ 		 * expansion. }
+ 		 */
+ 		if (fdo & DOGLOB)
+-			glob(start, wp, fdo & DOMARKDIRS);
++			glob(start, wp, fdo & DOMARKDIRS, ignorecase);
+ 		else
+ 			XPput(*wp, debunk(start, start, end - start));
+ 		return;
+ 	}
+ 	brace_end = p;
+ 	if (!comma) {
+-		alt_expand(wp, start, brace_end, end, fdo);
++		alt_expand(wp, start, brace_end, end, fdo, ignorecase);
+ 		return;
+ 	}
+ 
+@@ -1324,7 +1328,7 @@ alt_expand(XPtrV *wp, char *start, char 
+ 				memcpy(new + l1 + l2, brace_end, l3);
+ 				new[l1 + l2 + l3] = '\0';
+ 				alt_expand(wp, new, new + l1,
+-				    new + l1 + l2 + l3, fdo);
++				    new + l1 + l2 + l3, fdo, ignorecase);
+ 				field_start = p + 1;
+ 			}
+ 		}
+Index: exec.c
+===================================================================
+RCS file: /cvs/src/bin/ksh/exec.c,v
+retrieving revision 1.74
+diff -u -p -r1.74 exec.c
+--- exec.c	28 Jun 2019 13:34:59 -0000	1.74
++++ exec.c	2 Aug 2021 19:24:59 -0000
+@@ -348,7 +348,7 @@ execute(struct op *volatile t,
+ 		for (t = t->left; t != NULL && t->type == TPAT; t = t->right) {
+ 			for (ap = t->vars; *ap; ap++) {
+ 				if ((s = evalstr(*ap, DOTILDE|DOPAT)) &&
+-				    gmatch(cp, s, false))
++				    gmatch(cp, s, false, true))
+ 					goto Found;
+ 			}
+ 		}
+Index: ksh.1
+===================================================================
+RCS file: /cvs/src/bin/ksh/ksh.1,v
+retrieving revision 1.214
+diff -u -p -r1.214 ksh.1
+--- ksh.1	11 Mar 2021 07:04:12 -0000	1.214
++++ ksh.1	2 Aug 2021 19:24:59 -0000
+@@ -3612,6 +3612,8 @@ Enable BRL emacs-like command-line editi
+ Enable gmacs-like command-line editing (interactive shells only).
+ Currently identical to emacs editing except that transpose (^T) acts slightly
+ differently.
++.It Ic ignorecase
++The shell will ignore case while expanding commands and paths.
+ .It Ic ignoreeof
+ The shell will not (easily) exit when end-of-file is read;
+ .Ic exit
+Index: misc.c
+===================================================================
+RCS file: /cvs/src/bin/ksh/misc.c,v
+retrieving revision 1.76
+diff -u -p -r1.76 misc.c
+--- misc.c	26 Oct 2020 18:16:51 -0000	1.76
++++ misc.c	2 Aug 2021 19:24:59 -0000
+@@ -19,7 +19,7 @@ short ctypes [UCHAR_MAX+1];	/* type bits
+ static int dropped_privileges;
+ 
+ static int	do_gmatch(const unsigned char *, const unsigned char *,
+-		    const unsigned char *, const unsigned char *);
++		    const unsigned char *, const unsigned char *, int);
+ static const unsigned char *cclass(const unsigned char *, int);
+ 
+ /*
+@@ -133,6 +133,7 @@ const struct option sh_options[] = {
+ #ifdef EMACS
+ 	{ "gmacs",	  0,		OF_ANY },
+ #endif
++	{ "ignorecase",	  0,		OF_ANY }, /* non-standard */
+ 	{ "ignoreeof",	  0,		OF_ANY },
+ 	{ "interactive",'i',	    OF_CMDLINE },
+ 	{ "keyword",	'k',		OF_ANY },
+@@ -491,7 +492,7 @@ bi_getn(const char *as, int *ai)
+  */
+ 
+ int
+-gmatch(const char *s, const char *p, int isfile)
++gmatch(const char *s, const char *p, int isfile, int ignorecase)
+ {
+ 	const char *se, *pe;
+ 
+@@ -511,7 +512,7 @@ gmatch(const char *s, const char *p, int
+ 		return !strcmp(t, s);
+ 	}
+ 	return do_gmatch((const unsigned char *) s, (const unsigned char *) se,
+-	    (const unsigned char *) p, (const unsigned char *) pe);
++	    (const unsigned char *) p, (const unsigned char *) pe, ignorecase);
+ }
+ 
+ /* Returns if p is a syntacticly correct globbing pattern, false
+@@ -586,7 +587,7 @@ has_globbing(const char *xp, const char 
+ /* Function must return either 0 or 1 (assumed by code for 0x80|'!') */
+ static int
+ do_gmatch(const unsigned char *s, const unsigned char *se,
+-    const unsigned char *p, const unsigned char *pe)
++    const unsigned char *p, const unsigned char *pe, int ignorecase)
+ {
+ 	int sc, pc;
+ 	const unsigned char *prest, *psub, *pnext;
+@@ -599,7 +600,9 @@ do_gmatch(const unsigned char *s, const 
+ 		sc = s < se ? *s : '\0';
+ 		s++;
+ 		if (!ISMAGIC(pc)) {
+-			if (sc != pc)
++			if (!ignorecase && sc != pc)
++				return 0;
++			if (tolower(sc) != tolower(pc))
+ 				return 0;
+ 			continue;
+ 		}
+@@ -622,7 +625,7 @@ do_gmatch(const unsigned char *s, const 
+ 				return 1;
+ 			s--;
+ 			do {
+-				if (do_gmatch(s, se, p, pe))
++				if (do_gmatch(s, se, p, pe, ignorecase))
+ 					return 1;
+ 			} while (s++ < se);
+ 			return 0;
+@@ -639,15 +642,15 @@ do_gmatch(const unsigned char *s, const 
+ 			s--;
+ 			/* take care of zero matches */
+ 			if (p[-1] == (0x80 | '*') &&
+-			    do_gmatch(s, se, prest, pe))
++			    do_gmatch(s, se, prest, pe, ignorecase))
+ 				return 1;
+ 			for (psub = p; ; psub = pnext) {
+ 				pnext = pat_scan(psub, pe, 1);
+ 				for (srest = s; srest <= se; srest++) {
+-					if (do_gmatch(s, srest, psub, pnext - 2) &&
+-					    (do_gmatch(srest, se, prest, pe) ||
++					if (do_gmatch(s, srest, psub, pnext - 2, ignorecase) &&
++					    (do_gmatch(srest, se, prest, pe, ignorecase) ||
+ 					    (s != srest && do_gmatch(srest,
+-					    se, p - 2, pe))))
++					    se, p - 2, pe, ignorecase))))
+ 						return 1;
+ 				}
+ 				if (pnext == prest)
+@@ -663,14 +666,14 @@ do_gmatch(const unsigned char *s, const 
+ 			s--;
+ 			/* Take care of zero matches */
+ 			if (p[-1] == (0x80 | '?') &&
+-			    do_gmatch(s, se, prest, pe))
++			    do_gmatch(s, se, prest, pe, ignorecase))
+ 				return 1;
+ 			for (psub = p; ; psub = pnext) {
+ 				pnext = pat_scan(psub, pe, 1);
+ 				srest = prest == pe ? se : s;
+ 				for (; srest <= se; srest++) {
+-					if (do_gmatch(s, srest, psub, pnext - 2) &&
+-					    do_gmatch(srest, se, prest, pe))
++					if (do_gmatch(s, srest, psub, pnext - 2, ignorecase) &&
++					    do_gmatch(srest, se, prest, pe, ignorecase))
+ 						return 1;
+ 				}
+ 				if (pnext == prest)
+@@ -688,7 +691,7 @@ do_gmatch(const unsigned char *s, const 
+ 				for (psub = p; ; psub = pnext) {
+ 					pnext = pat_scan(psub, pe, 1);
+ 					if (do_gmatch(s, srest, psub,
+-					    pnext - 2)) {
++					    pnext - 2, ignorecase)) {
+ 						matched = 1;
+ 						break;
+ 					}
+@@ -696,7 +699,7 @@ do_gmatch(const unsigned char *s, const 
+ 						break;
+ 				}
+ 				if (!matched &&
+-				    do_gmatch(srest, se, prest, pe))
++				    do_gmatch(srest, se, prest, pe, ignorecase))
+ 					return 1;
+ 			}
+ 			return 0;
+Index: sh.h
+===================================================================
+RCS file: /cvs/src/bin/ksh/sh.h,v
+retrieving revision 1.76
+diff -u -p -r1.76 sh.h
+--- sh.h	7 Jul 2020 10:33:58 -0000	1.76
++++ sh.h	2 Aug 2021 19:24:59 -0000
+@@ -144,6 +144,7 @@ enum sh_flag {
+ #ifdef EMACS
+ 	FGMACS,		/* gmacs command editing */
+ #endif
++	FIGNORECASE, /* ignore case in tab completion */
+ 	FIGNOREEOF,	/* eof does not exit */
+ 	FTALKING,	/* -i: interactive */
+ 	FKEYWORD,	/* -k: name=value anywhere */
+@@ -428,8 +429,8 @@ char **	eval(char **, int);
+ char *	evalstr(char *cp, int);
+ char *	evalonestr(char *cp, int);
+ char	*debunk(char *, const char *, size_t);
+-void	expand(char *, XPtrV *, int);
+-int	glob_str(char *, XPtrV *, int);
++void	expand(char *, XPtrV *, int, int);
++int	glob_str(char *, XPtrV *, int, int);
+ /* exec.c */
+ int	execute(struct op * volatile, volatile int, volatile int *);
+ int	shcomexec(char **);
+@@ -540,7 +541,7 @@ void	change_flag(enum sh_flag, int, int)
+ int	parse_args(char **, int, int *);
+ int	getn(const char *, int *);
+ int	bi_getn(const char *, int *);
+-int	gmatch(const char *, const char *, int);
++int	gmatch(const char *, const char *, int, int);
+ int	has_globbing(const char *, const char *);
+ const unsigned char *pat_scan(const unsigned char *, const unsigned char *,
+     int);
