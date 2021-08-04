@@ -4,7 +4,7 @@ RCS file: /cvs/xenocara/app/cwm/calmwm.h,v
 retrieving revision 1.375
 diff -u -p -r1.375 calmwm.h
 --- calmwm.h	16 Apr 2020 13:32:35 -0000	1.375
-+++ calmwm.h	1 Aug 2021 10:28:00 -0000
++++ calmwm.h	4 Aug 2021 21:58:11 -0000
 @@ -483,6 +483,7 @@ void			 kbfunc_ptrmove(void *, struct ca
  void			 kbfunc_client_snap(void *, struct cargs *);
  void			 kbfunc_client_move(void *, struct cargs *);
@@ -19,7 +19,7 @@ RCS file: /cvs/xenocara/app/cwm/conf.c,v
 retrieving revision 1.252
 diff -u -p -r1.252 conf.c
 --- conf.c	16 Apr 2020 13:32:35 -0000	1.252
-+++ conf.c	1 Aug 2021 10:28:00 -0000
++++ conf.c	4 Aug 2021 21:58:11 -0000
 @@ -102,6 +102,7 @@ static const struct {
  	{ FUNC_CC(window-movetogroup-7, client_movetogroup, 7) },
  	{ FUNC_CC(window-movetogroup-8, client_movetogroup, 8) },
@@ -49,7 +49,7 @@ RCS file: /cvs/xenocara/app/cwm/cwmrc.5,v
 retrieving revision 1.76
 diff -u -p -r1.76 cwmrc.5
 --- cwmrc.5	16 Apr 2020 13:32:35 -0000	1.76
-+++ cwmrc.5	1 Aug 2021 10:28:00 -0000
++++ cwmrc.5	4 Aug 2021 21:58:11 -0000
 @@ -411,6 +411,24 @@ Snap window to top-left corner.
  Snap window to bottom-right corner.
  .It window-snap-down-left
@@ -81,7 +81,7 @@ RCS file: /cvs/xenocara/app/cwm/kbfunc.c,v
 retrieving revision 1.170
 diff -u -p -r1.170 kbfunc.c
 --- kbfunc.c	20 Mar 2020 18:50:08 -0000	1.170
-+++ kbfunc.c	1 Aug 2021 10:28:00 -0000
++++ kbfunc.c	4 Aug 2021 21:58:11 -0000
 @@ -301,28 +301,77 @@ kbfunc_client_snap(void *ctx, struct car
  	    cc->geom.y + cc->geom.h / 2, 1);
  
@@ -127,8 +127,8 @@ diff -u -p -r1.170 kbfunc.c
 +			}
  		}
 +	} else {
-+		cc->geom.x = (sc->work.w - cc->geom.w) / 2 - cc->bwidth;
-+		cc->geom.y = (sc->work.h - cc->geom.h) / 2 - cc->bwidth;
++		cc->geom.x = area.x + (area.w - cc->geom.w) / 2 - (cc->bwidth * 2);
++		cc->geom.y = area.y + (area.h - cc->geom.h) / 2 - (cc->bwidth * 2);
 +	}
 +
 +	client_move(cc);
