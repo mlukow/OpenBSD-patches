@@ -127,8 +127,8 @@ diff -u -p -r1.170 kbfunc.c
 +			}
  		}
 +	} else {
-+		cc->geom.x = area.x + (area.w - cc->geom.w) / 2 - (cc->bwidth * 2);
-+		cc->geom.y = area.y + (area.h - cc->geom.h) / 2 - (cc->bwidth * 2);
++		cc->geom.x = area.x + (area.w - cc->geom.w) / 2 - cc->bwidth;
++		cc->geom.y = area.y + (area.h - cc->geom.h) / 2 - cc->bwidth;
 +	}
 +
 +	client_move(cc);
