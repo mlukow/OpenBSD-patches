@@ -1,11 +1,8 @@
-Index: calmwm.h
-===================================================================
-RCS file: /cvs/xenocara/app/cwm/calmwm.h,v
-retrieving revision 1.375
-diff -u -p -r1.375 calmwm.h
---- calmwm.h	16 Apr 2020 13:32:35 -0000	1.375
-+++ calmwm.h	4 Aug 2021 21:58:11 -0000
-@@ -483,6 +483,7 @@ void			 kbfunc_ptrmove(void *, struct ca
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..4026764 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -506,6 +506,7 @@ void			 kbfunc_ptrmove(void *, struct cargs *);
  void			 kbfunc_client_snap(void *, struct cargs *);
  void			 kbfunc_client_move(void *, struct cargs *);
  void			 kbfunc_client_resize(void *, struct cargs *);
@@ -13,13 +10,10 @@ diff -u -p -r1.375 calmwm.h
  void			 kbfunc_client_close(void *, struct cargs *);
  void			 kbfunc_client_lower(void *, struct cargs *);
  void			 kbfunc_client_raise(void *, struct cargs *);
-Index: conf.c
-===================================================================
-RCS file: /cvs/xenocara/app/cwm/conf.c,v
-retrieving revision 1.252
-diff -u -p -r1.252 conf.c
---- conf.c	16 Apr 2020 13:32:35 -0000	1.252
-+++ conf.c	4 Aug 2021 21:58:11 -0000
+diff --git a/conf.c b/conf.c
+index 53ca295..19d0e95 100644
+--- a/conf.c
++++ b/conf.c
 @@ -102,6 +102,7 @@ static const struct {
  	{ FUNC_CC(window-movetogroup-7, client_movetogroup, 7) },
  	{ FUNC_CC(window-movetogroup-8, client_movetogroup, 8) },
@@ -43,13 +37,10 @@ diff -u -p -r1.252 conf.c
  	{ FUNC_CC(window-menu-label, client_menu_label, 0) },
  
  	{ FUNC_SC(window-cycle, client_cycle, (CWM_CYCLE_FORWARD)) },
-Index: cwmrc.5
-===================================================================
-RCS file: /cvs/xenocara/app/cwm/cwmrc.5,v
-retrieving revision 1.76
-diff -u -p -r1.76 cwmrc.5
---- cwmrc.5	16 Apr 2020 13:32:35 -0000	1.76
-+++ cwmrc.5	4 Aug 2021 21:58:11 -0000
+diff --git a/cwmrc.5 b/cwmrc.5
+index ab70d25..80d6f03 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
 @@ -411,6 +411,24 @@ Snap window to top-left corner.
  Snap window to bottom-right corner.
  .It window-snap-down-left
@@ -75,14 +66,11 @@ diff -u -p -r1.76 cwmrc.5
  .It pointer-move-up
  Move pointer
  .Ar moveamount
-Index: kbfunc.c
-===================================================================
-RCS file: /cvs/xenocara/app/cwm/kbfunc.c,v
-retrieving revision 1.170
-diff -u -p -r1.170 kbfunc.c
---- kbfunc.c	20 Mar 2020 18:50:08 -0000	1.170
-+++ kbfunc.c	4 Aug 2021 21:58:11 -0000
-@@ -301,28 +301,77 @@ kbfunc_client_snap(void *ctx, struct car
+diff --git a/kbfunc.c b/kbfunc.c
+index 2d5d1ce..24f27ad 100644
+--- a/kbfunc.c
++++ b/kbfunc.c
+@@ -304,28 +304,77 @@ kbfunc_client_snap(void *ctx, struct cargs *cargs)
  	    cc->geom.y + cc->geom.h / 2, 1);
  
  	flags = cargs->flag;
