@@ -1,0 +1,118 @@
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..c1f7dfc 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -312,6 +312,7 @@ struct conf {
+ 	int			 bwidth;
+ 	int			 mamount;
+ 	int			 snapdist;
++	int			 hidegroupswhencycling;
+ 	int			 htile;
+ 	int			 vtile;
+ 	struct gap		 gap;
+diff --git a/conf.c b/conf.c
+index 53ca295..a2d9ab0 100644
+--- a/conf.c
++++ b/conf.c
+@@ -281,6 +281,7 @@ conf_init(struct conf *c)
+ 	c->stickygroups = 0;
+ 	c->bwidth = 1;
+ 	c->mamount = 1;
++	c->hidegroupswhencycling = 1;
+ 	c->htile = 50;
+ 	c->vtile = 50;
+ 	c->snapdist = 0;
+diff --git a/cwmrc.5 b/cwmrc.5
+index ab70d25..430dd99 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
+@@ -183,6 +183,13 @@ This
+ can be used for applications such as
+ .Xr xclock 1 ,
+ where the user may wish to remain visible.
++.It Ic hide-groups-when-cycling Ic yes Ns \&| Ns Ic no
++Toggle hiding groups when cycling using
++.Ic group-cycle
++and
++.Ic group-rcycle
++functions.
++The default behavior is to hide groups.
+ .It Ic htile Ar percent
+ Set the percentage of screen the master window should occupy
+ after calling
+diff --git a/group.c b/group.c
+index 59eae73..5527639 100644
+--- a/group.c
++++ b/group.c
+@@ -292,12 +292,37 @@ group_cycle(struct screen_ctx *sc, int flags)
+ 	if (showgroup == NULL)
+ 		return;
+ 
+-	group_hide(oldgc);
++	if (Conf.hidegroupswhencycling) {
++		group_hide(oldgc);
+ 
+-	if (group_holds_only_hidden(showgroup))
+-		group_show(showgroup);
+-	else
++		if (group_holds_only_hidden(showgroup))
++			group_show(showgroup);
++		else
++			group_set_active(showgroup);
++	} else {
++		sc->cycling = 1;
++		client_ptr_save(client_current(sc));
+ 		group_set_active(showgroup);
++
++		struct client_ctx	*cc;
++		u_int8_t warped = 0;
++		TAILQ_FOREACH(cc, &sc->clientq, entry) {
++			if (cc->gc != showgroup || cc->flags & CLIENT_HIDDEN) {
++				continue;
++			}
++
++			client_raise(cc);
++
++			if (!warped) {
++				warped = 1;
++				if (!client_inbound(cc, cc->ptr.x, cc->ptr.y)) {
++					cc->ptr.x = cc->geom.w / 2;
++					cc->ptr.y = cc->geom.h / 2;
++				}
++				client_ptr_warp(cc);
++			}
++		}
++	}
+ }
+ 
+ static struct group_ctx *
+diff --git a/parse.y b/parse.y
+index 383b2dd..8b89bd2 100644
+--- a/parse.y
++++ b/parse.y
+@@ -77,6 +77,7 @@ typedef struct {
+ %token	COLOR SNAPDIST
+ %token	ACTIVEBORDER INACTIVEBORDER URGENCYBORDER
+ %token	GROUPBORDER UNGROUPBORDER
++%token	HIDEGROUPSWHENCYCLING
+ %token	MENUBG MENUFG
+ %token	FONTCOLOR FONTSELCOLOR
+ %token	ERROR
+@@ -124,6 +125,9 @@ main		: FONTNAME STRING		{
+ 			}
+ 			conf->bwidth = $2;
+ 		}
++		| HIDEGROUPSWHENCYCLING yesno {
++			conf->hidegroupswhencycling = $2;
++		}
+ 		| HTILE NUMBER {
+ 			if ($2 < 0 || $2 > 99) {
+ 				yyerror("invalid htile percent");
+@@ -332,6 +336,7 @@ lookup(char *s)
+ 		{ "fontname",		FONTNAME},
+ 		{ "gap",		GAP},
+ 		{ "groupborder",	GROUPBORDER},
++		{ "hide-groups-when-cycling", HIDEGROUPSWHENCYCLING},
+ 		{ "htile",		HTILE},
+ 		{ "ignore",		IGNORE},
+ 		{ "inactiveborder",	INACTIVEBORDER},
