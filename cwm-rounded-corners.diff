@@ -1,0 +1,79 @@
+diff --git a/Makefile b/Makefile
+index 1f56cd4..758556d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -16,11 +16,11 @@ OBJS=		calmwm.o screen.o xmalloc.o client.o menu.o \
+ 		
+ PKG_CONFIG?=	pkg-config
+ 
+-CPPFLAGS+=	`${PKG_CONFIG} --cflags x11 xft xrandr`
++CPPFLAGS+=	`${PKG_CONFIG} --cflags x11 xft xext xrandr`
+ 
+ CFLAGS?=	-Wall -O2 -g -D_GNU_SOURCE
+ 
+-LDFLAGS+=	`${PKG_CONFIG} --libs x11 xft xrandr`
++LDFLAGS+=	`${PKG_CONFIG} --libs x11 xft xext xrandr`
+ 
+ MANPREFIX?=	${PREFIX}/share/man
+ 
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..20990de 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -49,6 +49,7 @@ size_t strlcpy(char *, const char *, size_t);
+ #include <X11/Xproto.h>
+ #include <X11/Xutil.h>
+ #include <X11/cursorfont.h>
++#include <X11/extensions/shape.h>
+ #include <X11/extensions/Xrandr.h>
+ #include <X11/keysym.h>
+ 
+diff --git a/client.c b/client.c
+index f9262f8..7f56009 100644
+--- a/client.c
++++ b/client.c
+@@ -597,6 +597,44 @@ client_draw_border(struct client_ctx *cc)
+ 
+ 	XSetWindowBorderWidth(X_Dpy, cc->win, (unsigned int)cc->bwidth);
+ 	XSetWindowBorder(X_Dpy, cc->win, pixel);
++	client_round_corners(cc, X_Dpy, cc->bwidth);
++}
++
++static void
++client_round_corners(struct client_ctx *cc, Display *d, int rad)
++{
++	unsigned int ww, wh, bw, dia = 2 * rad;
++
++	ww = cc->geom.w;
++	wh = cc->geom.h;
++	bw = cc->bwidth;
++
++	if (ww < dia || wh < dia) return;
++
++	Pixmap mask = XCreatePixmap(d, cc->win, ww + 2 * bw, wh + 2 * bw, 1);
++
++	if (!mask) return;
++
++	XGCValues xgcv;
++	GC shape_gc = XCreateGC(d, mask, 0, &xgcv);
++
++	if (!shape_gc) {
++		XFreePixmap(d, mask);
++		return;
++	}
++
++	XSetForeground(d, shape_gc, 0);
++	XFillRectangle(d, mask, shape_gc, 0, 0, ww + 2 * bw, wh + 2 * bw);
++	XSetForeground(d, shape_gc, 1);
++	XFillArc(d, mask, shape_gc, 0, 0, dia, dia, 0, 23040);
++	XFillArc(d, mask, shape_gc, ww+2*bw-dia-1, 0, dia, dia, 0, 23040);
++	XFillArc(d, mask, shape_gc, 0, wh+2*bw-dia-1, dia, dia, 0, 23040);
++	XFillArc(d, mask, shape_gc, ww+2*bw-dia-1, wh+2*bw-dia-1, dia, dia, 0, 23040);
++	XFillRectangle(d, mask, shape_gc, rad, 0, ww-dia+2*bw, wh+2*bw);
++	XFillRectangle(d, mask, shape_gc, 0, rad, ww+2*bw, wh-dia+2*bw);
++	XShapeCombineMask(d, cc->win, ShapeBounding, -bw, -bw, mask, ShapeSet);
++	XFreePixmap(d, mask);
++	XFreeGC(d, shape_gc);
+ }
+ 
+ static void
