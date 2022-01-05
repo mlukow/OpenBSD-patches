@@ -17,7 +17,7 @@ index 1f56cd4..758556d 100644
  MANPREFIX?=	${PREFIX}/share/man
  
 diff --git a/calmwm.h b/calmwm.h
-index 95e3c8d..20990de 100644
+index 95e3c8d..156dd36 100644
 --- a/calmwm.h
 +++ b/calmwm.h
 @@ -49,6 +49,7 @@ size_t strlcpy(char *, const char *, size_t);
@@ -28,25 +28,47 @@ index 95e3c8d..20990de 100644
  #include <X11/extensions/Xrandr.h>
  #include <X11/keysym.h>
  
+@@ -325,6 +326,7 @@ struct conf {
+ 	char			*known_hosts;
+ 	char			*wm_argv;
+ 	int			 debug;
++	int			 cradius;
+ };
+ 
+ /* MWM hints */
 diff --git a/client.c b/client.c
-index f9262f8..7f56009 100644
+index f9262f8..7d4340d 100644
 --- a/client.c
 +++ b/client.c
-@@ -597,6 +597,44 @@ client_draw_border(struct client_ctx *cc)
+@@ -35,6 +35,7 @@ static void			 client_class_hint(struct client_ctx *);
+ static void			 client_placement(struct client_ctx *);
+ static void			 client_mwm_hints(struct client_ctx *);
+ static void			 client_wm_protocols(struct client_ctx *);
++static void			 client_round_corners(struct client_ctx *, Display *);
+ 
+ struct client_ctx *
+ client_init(Window win, struct screen_ctx *sc)
+@@ -597,6 +598,50 @@ client_draw_border(struct client_ctx *cc)
  
  	XSetWindowBorderWidth(X_Dpy, cc->win, (unsigned int)cc->bwidth);
  	XSetWindowBorder(X_Dpy, cc->win, pixel);
-+	client_round_corners(cc, X_Dpy, cc->bwidth);
++
++	client_round_corners(cc, X_Dpy);
 +}
 +
 +static void
-+client_round_corners(struct client_ctx *cc, Display *d, int rad)
++client_round_corners(struct client_ctx *cc, Display *d)
 +{
-+	unsigned int ww, wh, bw, dia = 2 * rad;
++	unsigned int ww, wh, bw, rad, dia;
 +
 +	ww = cc->geom.w;
 +	wh = cc->geom.h;
 +	bw = cc->bwidth;
++	rad = Conf.cradius;
++	dia = 2 * rad;
++
++	if (rad <= 0 || (cc->flags & CLIENT_FULLSCREEN))
++		return;
 +
 +	if (ww < dia || wh < dia) return;
 +
@@ -77,3 +99,64 @@ index f9262f8..7f56009 100644
  }
  
  static void
+diff --git a/conf.c b/conf.c
+index 53ca295..6d619e8 100644
+--- a/conf.c
++++ b/conf.c
+@@ -280,6 +280,7 @@ conf_init(struct conf *c)
+ 
+ 	c->stickygroups = 0;
+ 	c->bwidth = 1;
++	c->cradius = 0;
+ 	c->mamount = 1;
+ 	c->htile = 50;
+ 	c->vtile = 50;
+diff --git a/cwmrc.5 b/cwmrc.5
+index ab70d25..3a463dc 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
+@@ -127,6 +127,9 @@ may be taken from the
+ .It Ic borderwidth Ar pixels
+ Set the window border width to
+ .Ar pixels .
++.It Ic cornerradius Ar pixels
++Set the window corner radius to
++.Ar pixels .
+ .It Ic color activeborder Ar color
+ Set the color of the active border.
+ .It Ic color font Ar color
+diff --git a/parse.y b/parse.y
+index 383b2dd..3644acb 100644
+--- a/parse.y
++++ b/parse.y
+@@ -74,7 +74,7 @@ typedef struct {
+ %token	FONTNAME STICKY GAP
+ %token	AUTOGROUP COMMAND IGNORE WM
+ %token	YES NO BORDERWIDTH MOVEAMOUNT HTILE VTILE
+-%token	COLOR SNAPDIST
++%token	COLOR SNAPDIST CORNERRADIUS
+ %token	ACTIVEBORDER INACTIVEBORDER URGENCYBORDER
+ %token	GROUPBORDER UNGROUPBORDER
+ %token	MENUBG MENUFG
+@@ -124,6 +124,13 @@ main		: FONTNAME STRING		{
+ 			}
+ 			conf->bwidth = $2;
+ 		}
++		| CORNERRADIUS NUMBER {
++		    if ($2 < 0 || $2 > INT_MAX) {
++				yyerror("invalid cornerradius");
++				YYERROR;
++			}
++			conf->cradius = $2;
++		}
+ 		| HTILE NUMBER {
+ 			if ($2 < 0 || $2 > 99) {
+ 				yyerror("invalid htile percent");
+@@ -328,6 +335,7 @@ lookup(char *s)
+ 		{ "borderwidth",	BORDERWIDTH},
+ 		{ "color",		COLOR},
+ 		{ "command",		COMMAND},
++		{ "cornerradius",	CORNERRADIUS},
+ 		{ "font",		FONTCOLOR},
+ 		{ "fontname",		FONTNAME},
+ 		{ "gap",		GAP},
