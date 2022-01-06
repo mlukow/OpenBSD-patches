@@ -5,7 +5,7 @@ Assorted patches, work very much in progress
 
 ### cwm-magnet.diff
 
-Add window-tile-{up,up-right,right,down-right,down,down-left,left,up-left} functions that fill halves and quarters of the screen with the current window, Magnet.app-like
+Add `window-tile-{up,up-right,right,down-right,down,down-left,left,up-left}` functions that fill halves and quarters of the screen with the current window, Magnet.app-like
 
 ![cwm-magnet demo](assets/cwm-magnet.gif)
 
