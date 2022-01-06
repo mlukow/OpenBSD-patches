@@ -1,0 +1,652 @@
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..8af13e6 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -114,6 +114,17 @@ enum color {
+ 	CWM_COLOR_NITEMS
+ };
+ 
++enum menutype {
++	CWM_MENU_TYPE_APPLICATION,
++	CWM_MENU_TYPE_EXEC,
++	CWM_MENU_TYPE_GROUP,
++	CWM_MENU_TYPE_LABEL,
++	CWM_MENU_TYPE_SSH,
++	CWM_MENU_TYPE_WINDOW,
++	CWM_MENU_TYPE_WM,
++	CWM_MENU_TYPE_NITEMS
++};
++
+ struct geom {
+ 	int		 x;
+ 	int		 y;
+@@ -243,6 +254,7 @@ struct screen_ctx {
+ 	} prop;
+ 	XftColor		 xftcolor[CWM_COLOR_NITEMS];
+ 	XftFont			*xftfont;
++	XftFont			*xftmenutitlefont;
+ };
+ TAILQ_HEAD(screen_q, screen_ctx);
+ 
+@@ -299,6 +311,11 @@ struct menu {
+ };
+ TAILQ_HEAD(menu_q, menu);
+ 
++struct menupos {
++	int x;
++	int y;
++};
++
+ struct conf {
+ 	struct keybind_q	 keybindq;
+ 	struct mousebind_q	 mousebindq;
+@@ -306,6 +323,17 @@ struct conf {
+ 	struct ignore_q		 ignoreq;
+ 	struct cmd_q		 cmdq;
+ 	struct wm_q		 wmq;
++	int			 menucenter;
++	int			 menumaxitems;
++	int			 menuindent;
++	int			 menuitemheight;
++	struct menupos		*menupos;
++	int			 menuwidth;
++	char			*menutitle[CWM_MENU_TYPE_NITEMS];
++	char			*menutitlefont;
++	int			 menutitleheight;
++	char			*menuprefix;
++	char			*menusuffix;
+ 	int			 ngroups;
+ 	int			 stickygroups;
+ 	int			 nameqlen;
+diff --git a/conf.c b/conf.c
+index 53ca295..894c586 100644
+--- a/conf.c
++++ b/conf.c
+@@ -68,6 +68,15 @@ static const char *color_binds[] = {
+ 	"black",		/* CWM_COLOR_MENU_FONT */
+ 	"",			/* CWM_COLOR_MENU_FONT_SEL */
+ };
++static const char *menu_title_binds[] = {
++	"application",		/* CWM_MENU_TYPE_APPLICATION */
++	"exec",			/* CWM_MENU_TYPE_EXEC */
++	"group",		/* CWM_MENU_TYPE_GROUP */
++	"label",		/* CWM_MENU_TYPE_LABEL */
++	"ssh",			/* CWM_MENU_TYPE_SSH */
++	"window",		/* CWM_MENU_TYPE_WINDOW */
++	"wm",			/* CWM_MENU_TYPE_WM */
++};
+ static const struct {
+ 	const char	*tag;
+ 	void		 (*handler)(void *, struct cargs *);
+@@ -287,6 +296,14 @@ conf_init(struct conf *c)
+ 	c->ngroups = 0;
+ 	c->nameqlen = 5;
+ 
++	c->menutitlefont = xstrdup("sans-serif:pixelsize=14:bold");
++	c->menucenter = 0;
++	c->menuindent = 0;
++	c->menuitemheight = 0;
++	c->menutitleheight = 0;
++	c->menupos = NULL;
++	c->menuwidth = 0;
++
+ 	TAILQ_INIT(&c->ignoreq);
+ 	TAILQ_INIT(&c->autogroupq);
+ 	TAILQ_INIT(&c->keybindq);
+@@ -303,6 +320,12 @@ conf_init(struct conf *c)
+ 	for (i = 0; i < nitems(color_binds); i++)
+ 		c->color[i] = xstrdup(color_binds[i]);
+ 
++	for (i = 0; i < nitems(menu_title_binds); i++)
++		c->menutitle[i] = xstrdup(menu_title_binds[i]);
++
++	c->menuprefix = xstrdup("\xc2\xbb");
++	c->menusuffix = xstrdup("\xc2\xab");
++
+ 	conf_cmd_add(c, "lock", "xlock");
+ 	conf_cmd_add(c, "term", "xterm");
+ 	conf_wm_add(c, "cwm", "cwm");
+@@ -486,6 +509,23 @@ conf_screen(struct screen_ctx *sc)
+ 			errx(1, "%s: XftFontOpenName: %s", __func__, Conf.font);
+ 	}
+ 
++	if (Conf.menuitemheight == 0) {
++		Conf.menuitemheight = sc->xftfont->height;
++	}
++
++	sc->xftmenutitlefont = XftFontOpenXlfd(X_Dpy, sc->which,
++			Conf.menutitlefont);
++	if (sc->xftmenutitlefont == NULL) {
++		sc->xftmenutitlefont = XftFontOpenName(X_Dpy, sc->which,
++				Conf.menutitlefont);
++		if (sc->xftmenutitlefont == NULL)
++			errx(1, "%s: XftFontOpenName: %s", __func__, Conf.menutitlefont);
++	}
++
++	if (Conf.menutitleheight == 0) {
++		Conf.menutitleheight = sc->xftmenutitlefont->height;
++	}
++
+ 	for (i = 0; i < nitems(color_binds); i++) {
+ 		if (i == CWM_COLOR_MENU_FONT_SEL && *Conf.color[i] == '\0') {
+ 			xu_xorcolor(sc->xftcolor[CWM_COLOR_MENU_BG],
+diff --git a/cwmrc.5 b/cwmrc.5
+index ab70d25..3914d22 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
+@@ -194,6 +194,72 @@ The default is 50.
+ Ignore, and do not warp to, windows with the name
+ .Ar windowname
+ when drawing borders and cycling through windows.
++.It Ic menucenter
++When set, all menus will be automatically centered on the screen.
++If
++.Dq menumaxitems 
++is set, maximum number of visible items will be used to calculate
++the maximum possible height of the menu, and centering will be
++based on this number. If not, the top line of the menu will be
++centered.
++.It Ic menuindent Ar pixels
++If
++.Dq menuwidth
++is set, this setting will set the left ident of all menu items.
++If not, it will set both left and right indent.
++.It Ic menuitemheight Ar pixels
++Sets the height of the menu items. If not set, it defaults to the
++height of the menu font.
++.It Ic menumaxitems Ar number
++Set the maximum number of displayed menu items. if not set, it
++defaults to displaying unlimited number of items.
++.It Ic menupos Ar x Ar y
++If set, all menus will appear at given
++.Ar x
++and
++.Ar y
++coordinates instead of the current cursor position.
++.It Ic menuprefix Ar string
++If set, it prefixes the entered phrase with
++.Ar string .
++If not set, it defaults to >>.
++.It Ic menusuffix Ar string
++If set, it suffixes the entered phrase with
++.Ar string .
++If not set, it defaults to <<.
++.It Ic menutitle Ar type Ar string
++Override the default title of the menu
++.Ar type
++with
++.Ar string .
++The
++.Ar type
++can be one of
++.Dq application ,
++.Dq exec ,
++.Dq group ,
++.Dq label ,
++.Dq ssh ,
++.Dq window
++or
++.Dq wm .
++.It Ic menutitlefontname Ar font
++If set, it overrides the default
++.Dq font
++setting for the menu title and the search phrase.
++.It Ic menutitleheight Ar pixels
++Set the height of the menu header to
++.Ar pixels .
++If not set, it defaults to the height of the
++.Dq menutitlefontname
++or
++.Dq fontname .
++.It Ic menuwidth Ar pixels
++Set width of the menu to
++.Ar pixels .
++If not set, it defaults to the widest menu item plus twice the
++.Dq menuindent
++if set.
+ .It Ic moveamount Ar pixels
+ Set a default size for the keyboard movement bindings,
+ in pixels.
+diff --git a/kbfunc.c b/kbfunc.c
+index 2d5d1ce..7b67e19 100644
+--- a/kbfunc.c
++++ b/kbfunc.c
+@@ -524,8 +524,8 @@ kbfunc_menu_client(void *ctx, struct cargs *cargs)
+ 			menuq_add(&menuq, cc, NULL);
+ 	}
+ 
+-	if ((mi = menu_filter(sc, &menuq, "window", NULL, mflags,
+-	    search_match_client, search_print_client)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_WINDOW],
++		NULL, mflags, search_match_client, search_print_client)) != NULL) {
+ 		cc = (struct client_ctx *)mi->ctx;
+ 		client_show(cc);
+ 		if ((old_cc = client_current(sc)) != NULL)
+@@ -556,8 +556,9 @@ kbfunc_menu_cmd(void *ctx, struct cargs *cargs)
+ 		menuq_add(&menuq, cmd, NULL);
+ 	}
+ 
+-	if ((mi = menu_filter(sc, &menuq, "application", NULL, mflags,
+-	    search_match_cmd, search_print_cmd)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq,
++		Conf.menutitle[CWM_MENU_TYPE_APPLICATION], NULL, mflags,
++		search_match_cmd, search_print_cmd)) != NULL) {
+ 		cmd = (struct cmd_ctx *)mi->ctx;
+ 		u_spawn(cmd->path);
+ 	}
+@@ -584,8 +585,8 @@ kbfunc_menu_group(void *ctx, struct cargs *cargs)
+ 		menuq_add(&menuq, gc, NULL);
+ 	}
+ 
+-	if ((mi = menu_filter(sc, &menuq, "group", NULL, mflags,
+-	    search_match_group, search_print_group)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_GROUP],
++		NULL, mflags, search_match_group, search_print_group)) != NULL) {
+ 		gc = (struct group_ctx *)mi->ctx;
+ 		(group_holds_only_hidden(gc)) ?
+ 		    group_show(gc) : group_hide(gc);
+@@ -610,8 +611,8 @@ kbfunc_menu_wm(void *ctx, struct cargs *cargs)
+ 	TAILQ_FOREACH(wm, &Conf.wmq, entry)
+ 		menuq_add(&menuq, wm, NULL);
+ 
+-	if ((mi = menu_filter(sc, &menuq, "wm", NULL, mflags,
+-	    search_match_wm, search_print_wm)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_WM], NULL,
++		mflags, search_match_wm, search_print_wm)) != NULL) {
+ 		wm = (struct cmd_ctx *)mi->ctx;
+ 		free(Conf.wm_argv);
+ 		Conf.wm_argv = xstrdup(wm->path);
+@@ -674,8 +675,8 @@ kbfunc_menu_exec(void *ctx, struct cargs *cargs)
+ 	}
+ 	free(path);
+ 
+-	if ((mi = menu_filter(sc, &menuq, "exec", NULL, mflags,
+-	    search_match_exec, search_print_text)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_EXEC], NULL,
++		mflags, search_match_exec, search_print_text)) != NULL) {
+ 		if (mi->text[0] == '\0')
+ 			goto out;
+ 		u_spawn(mi->text);
+@@ -736,8 +737,8 @@ kbfunc_menu_ssh(void *ctx, struct cargs *cargs)
+ 		err(1, "%s", path);
+ 	(void)fclose(fp);
+ menu:
+-	if ((mi = menu_filter(sc, &menuq, "ssh", NULL, mflags,
+-	    search_match_text, search_print_text)) != NULL) {
++	if ((mi = menu_filter(sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_SSH], NULL,
++		mflags, search_match_text, search_print_text)) != NULL) {
+ 		if (mi->text[0] == '\0')
+ 			goto out;
+ 		l = snprintf(path, sizeof(path), "%s -T '[ssh] %s' -e ssh %s",
+@@ -763,8 +764,8 @@ kbfunc_client_menu_label(void *ctx, struct cargs *cargs)
+ 	TAILQ_INIT(&menuq);
+ 
+ 	/* dummy is set, so this will always return */
+-	mi = menu_filter(cc->sc, &menuq, "label", cc->label, mflags,
+-	    search_match_text, search_print_text);
++	mi = menu_filter(cc->sc, &menuq, Conf.menutitle[CWM_MENU_TYPE_LABEL],
++		cc->label, mflags, search_match_text, search_print_text);
+ 
+ 	if (!mi->abort) {
+ 		free(cc->label);
+diff --git a/menu.c b/menu.c
+index 1d84ab7..425faf3 100644
+--- a/menu.c
++++ b/menu.c
+@@ -34,9 +34,6 @@
+ 
+ #include "calmwm.h"
+ 
+-#define PROMPT_SCHAR	"\xc2\xbb"
+-#define PROMPT_ECHAR	"\xc2\xab"
+-
+ #define MENUMASK 	(MOUSEMASK | ButtonMotionMask | KeyPressMask | \
+ 			 ExposureMask)
+ #define MENUGRABMASK	(MOUSEMASK | ButtonMotionMask | StructureNotifyMask)
+@@ -125,7 +122,8 @@ menu_filter(struct screen_ctx *sc, struct menu_q *menuq, const char *prompt,
+ 	XMapRaised(X_Dpy, mc.win);
+ 
+ 	if (XGrabPointer(X_Dpy, mc.win, False, MENUGRABMASK,
+-	    GrabModeAsync, GrabModeAsync, None, Conf.cursor[CF_QUESTION],
++	    GrabModeAsync, GrabModeAsync, None,
++	    Conf.menucenter ? Conf.cursor[CF_NORMAL] : Conf.cursor[CF_QUESTION],
+ 	    CurrentTime) != GrabSuccess) {
+ 		XftDrawDestroy(mc.xftdraw);
+ 		XDestroyWindow(X_Dpy, mc.win);
+@@ -351,20 +349,21 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
+ 	}
+ 
+ 	(void)snprintf(mc->dispstr, sizeof(mc->dispstr), "%s%s%s%s",
+-	    mc->promptstr, PROMPT_SCHAR, mc->searchstr, PROMPT_ECHAR);
+-	XftTextExtentsUtf8(X_Dpy, sc->xftfont,
++	    mc->promptstr, Conf.menuprefix, mc->searchstr, Conf.menusuffix);
++	XftTextExtentsUtf8(X_Dpy, sc->xftmenutitlefont,
+ 	    (const FcChar8*)mc->dispstr, strlen(mc->dispstr), &extents);
+-	mc->geom.w = extents.xOff;
+-	mc->geom.h = sc->xftfont->height + 1;
+-	mc->num = 1;
++	mc->geom.w = extents.xOff + 2 * Conf.menuindent;
++	mc->geom.h = Conf.menutitleheight + 1;
++	mc->num = 0;
+ 
+ 	TAILQ_FOREACH(mi, resultq, resultentry) {
+ 		(*mc->print)(mi, mc->listing);
+ 		XftTextExtentsUtf8(X_Dpy, sc->xftfont,
+ 		    (const FcChar8*)mi->print,
+ 		    MIN(strlen(mi->print), MENU_MAXENTRY), &extents);
+-		mc->geom.w = MAX(mc->geom.w, extents.xOff);
+-		mc->geom.h += sc->xftfont->height + 1;
++		mc->geom.w = MAX(mc->geom.w, extents.xOff + 2 * Conf.menuindent);
++		if (Conf.menumaxitems == 0 || mc->num <= Conf.menumaxitems)
++			mc->geom.h += Conf.menuitemheight + 1;
+ 		mc->num++;
+ 	}
+ 
+@@ -375,35 +374,49 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
+ 	xsave = mc->geom.x;
+ 	ysave = mc->geom.y;
+ 
+-	/* Never hide the top, or left side, of the menu. */
+-	if (mc->geom.x + mc->geom.w >= area.w)
+-		mc->geom.x = area.w - mc->geom.w;
+-	if (mc->geom.x < area.x) {
+-		mc->geom.x = area.x;
+-		mc->geom.w = MIN(mc->geom.w, (area.w - area.x));
+-	}
+-	if (mc->geom.y + mc->geom.h >= area.h)
+-		mc->geom.y = area.h - mc->geom.h;
+-	if (mc->geom.y < area.y) {
+-		mc->geom.y = area.y;
+-		mc->geom.h = MIN(mc->geom.h, (area.h - area.y));
+-	}
++	if (Conf.menuwidth > 0)
++		mc->geom.w = Conf.menuwidth;
++
++	if (Conf.menucenter) {
++		mc->geom.x = (area.w - mc->geom.w) / 2;
++		mc->geom.y = (area.h - (Conf.menutitleheight +
++					Conf.menumaxitems * (Conf.menuitemheight + 1))) / 2;
++	} else if (Conf.menupos) {
++		mc->geom.x = Conf.menupos->x;
++		mc->geom.y = Conf.menupos->y;
++	} else {
++		/* Never hide the top, or left side, of the menu. */
++		if (mc->geom.x + mc->geom.w >= area.w)
++			mc->geom.x = area.w - mc->geom.w;
++		if (mc->geom.x < area.x) {
++			mc->geom.x = area.x;
++			mc->geom.w = MIN(mc->geom.w, (area.w - area.x));
++		}
++		if (mc->geom.y + mc->geom.h >= area.h)
++			mc->geom.y = area.h - mc->geom.h;
++		if (mc->geom.y < area.y) {
++			mc->geom.y = area.y;
++			mc->geom.h = MIN(mc->geom.h, (area.h - area.y));
++		}
+ 
+-	if (mc->geom.x != xsave || mc->geom.y != ysave)
+-		xu_ptr_set(sc->rootwin, mc->geom.x, mc->geom.y);
++		if (mc->geom.x != xsave || mc->geom.y != ysave)
++			xu_ptr_set(sc->rootwin, mc->geom.x, mc->geom.y);
++	}
+ 
+ 	XClearWindow(X_Dpy, mc->win);
+ 	XMoveResizeWindow(X_Dpy, mc->win, mc->geom.x, mc->geom.y,
+ 	    mc->geom.w, mc->geom.h);
+ 
+-	n = 1;
++	n = 0;
+ 	XftDrawStringUtf8(mc->xftdraw,
+-	    &sc->xftcolor[CWM_COLOR_MENU_FONT], sc->xftfont,
+-	    0, sc->xftfont->ascent,
++	    &sc->xftcolor[CWM_COLOR_MENU_FONT], sc->xftmenutitlefont,
++	    Conf.menuindent, (Conf.menutitleheight -
++			sc->xftmenutitlefont->height) / 2 + sc->xftmenutitlefont->ascent,
+ 	    (const FcChar8*)mc->dispstr, strlen(mc->dispstr));
+ 
+ 	TAILQ_FOREACH(mi, resultq, resultentry) {
+-		int y = n * (sc->xftfont->height + 1) + sc->xftfont->ascent + 1;
++		int y = Conf.menutitleheight +
++			n * (Conf.menuitemheight + 1) + sc->xftfont->ascent + 1;
+ 
+ 		/* Stop drawing when menu doesn't fit inside the screen. */
+ 		if (mc->geom.y + y > area.h)
+@@ -411,12 +424,15 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
+ 
+ 		XftDrawStringUtf8(mc->xftdraw,
+ 		    &sc->xftcolor[CWM_COLOR_MENU_FONT], sc->xftfont,
+-		    0, y,
++		    Conf.menuindent,
++			y + (Conf.menuitemheight - sc->xftfont->height) / 2,
+ 		    (const FcChar8*)mi->print, strlen(mi->print));
+ 		n++;
+ 	}
+-	if (n > 1)
+-		menu_draw_entry(mc, resultq, 1, 1);
++	if (n >= 1) {
++		mc->entry = 0;
++		menu_draw_entry(mc, resultq, mc->entry, 1);
++	}
+ }
+ 
+ static void
+@@ -425,7 +441,7 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
+ {
+ 	struct screen_ctx	*sc = mc->sc;
+ 	struct menu		*mi;
+-	int			 color, i = 1;
++	int			 color, i = 0;
+ 
+ 	TAILQ_FOREACH(mi, resultq, resultentry)
+ 		if (entry == i++)
+@@ -435,12 +451,14 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
+ 
+ 	color = (active) ? CWM_COLOR_MENU_FG : CWM_COLOR_MENU_BG;
+ 	XftDrawRect(mc->xftdraw, &sc->xftcolor[color], 0,
+-	    (sc->xftfont->height + 1) * entry, mc->geom.w,
+-	    (sc->xftfont->height + 1) + sc->xftfont->descent);
++	    Conf.menutitleheight + (Conf.menuitemheight + 1) * entry, mc->geom.w,
++	    Conf.menuitemheight + sc->xftfont->descent);
+ 	color = (active) ? CWM_COLOR_MENU_FONT_SEL : CWM_COLOR_MENU_FONT;
+ 	XftDrawStringUtf8(mc->xftdraw,
+-	    &sc->xftcolor[color], sc->xftfont,
+-	    0, (sc->xftfont->height + 1) * entry + sc->xftfont->ascent + 1,
++	    &sc->xftcolor[color], sc->xftfont, Conf.menuindent,
++	    Conf.menutitleheight + (Conf.menuitemheight + 1) * entry +
++		sc->xftfont->ascent +
++		(Conf.menuitemheight - sc->xftfont->height) / 2 + 1,
+ 	    (const FcChar8*)mi->print, strlen(mi->print));
+ }
+ 
+@@ -453,7 +471,12 @@ menu_handle_move(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
+ 	if (mc->prev == mc->entry)
+ 		return;
+ 
+-	if (mc->prev != -1)
++	if (mc->entry == -1) {
++		mc->entry = mc->prev;
++		return;
++	}
++
++	if (mc->prev != -1 && mc->entry != -1)
+ 		menu_draw_entry(mc, resultq, mc->prev, 0);
+ 	if (mc->entry != -1) {
+ 		XChangeActivePointerGrab(X_Dpy, MENUGRABMASK,
+@@ -484,18 +507,15 @@ menu_handle_release(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
+ static int
+ menu_calc_entry(struct menu_ctx *mc, int x, int y)
+ {
+-	struct screen_ctx	*sc = mc->sc;
+-	int			 entry;
++	int	entry, num;
+ 
+-	entry = y / (sc->xftfont->height + 1);
++	entry = (y - Conf.menutitleheight) / (Conf.menuitemheight + 1);
++	num = MIN(mc->num, Conf.menumaxitems ? Conf.menumaxitems : mc->num);
+ 
+ 	/* in bounds? */
+-	if (x < 0 || x > mc->geom.w || y < 0 ||
+-	    y > (sc->xftfont->height + 1) * mc->num ||
+-	    entry < 0 || entry >= mc->num)
+-		entry = -1;
+-
+-	if (entry == 0)
++	if (x < 0 || x > mc->geom.w || y < Conf.menutitleheight ||
++	    y > Conf.menutitleheight + (Conf.menuitemheight + 1) * (num + 1) ||
++	    entry < 0 || entry > num)
+ 		entry = -1;
+ 
+ 	return entry;
+diff --git a/parse.y b/parse.y
+index 383b2dd..42bf594 100644
+--- a/parse.y
++++ b/parse.y
+@@ -78,8 +78,12 @@ typedef struct {
+ %token	ACTIVEBORDER INACTIVEBORDER URGENCYBORDER
+ %token	GROUPBORDER UNGROUPBORDER
+ %token	MENUBG MENUFG
++%token	MENUCENTER MENUPOS MENUWIDTH MENUTITLE MENUTITLEFONTNAME
++%token	MENUMAXITEMS MENUPREFIX MENUSUFFIX MENUTITLEHEIGHT
++%token	MENUITEMHEIGHT MENUINDENT
+ %token	FONTCOLOR FONTSELCOLOR
+ %token	ERROR
++%token	APPLICATION EXEC GROUP LABEL SSH WINDOW
+ %token	<v.string>		STRING
+ %token	<v.number>		NUMBER
+ %type	<v.number>		yesno
+@@ -111,8 +115,13 @@ yesno		: YES				{ $$ = 1; }
+ 		;
+ 
+ main		: FONTNAME STRING		{
++			if (!strcmp(conf->font, conf->menutitlefont)) {
++				free(conf->menutitlefont);
++				conf->menutitlefont = xstrdup($2);
++			}
++
+ 			free(conf->font);
+-			conf->font = $2;
++			conf->font = xstrdup($2);
+ 		}
+ 		| STICKY yesno {
+ 			conf->stickygroups = $2;
+@@ -247,6 +256,71 @@ main		: FONTNAME STRING		{
+ 			}
+ 			free($2);
+ 		}
++		| MENUCENTER {
++			conf->menucenter = 1;
++		}
++		| MENUMAXITEMS NUMBER {
++			if ($2 >= 0)
++				conf->menumaxitems = $2;
++		}
++		| MENUINDENT NUMBER {
++			conf->menuindent = $2;
++		}
++		| MENUITEMHEIGHT NUMBER {
++			conf->menuitemheight = $2;
++		}
++		| MENUPOS NUMBER NUMBER {
++			conf->menupos = xcalloc(1, sizeof(struct menupos));
++			conf->menupos->x = $2;
++			conf->menupos->y = $3;
++		}
++		| MENUWIDTH NUMBER {
++			if ($2 > 0)
++				conf->menuwidth = $2;
++		}
++		| MENUTITLE APPLICATION STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_APPLICATION]);
++			conf->menutitle[CWM_MENU_TYPE_APPLICATION] = $3;
++		}
++		| MENUTITLEFONTNAME STRING {
++			free(conf->menutitlefont);
++			conf->menutitlefont = $2;
++		}
++		| MENUTITLEHEIGHT NUMBER {
++			conf->menutitleheight = $2;
++		}
++		| MENUTITLE EXEC STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_EXEC]);
++			conf->menutitle[CWM_MENU_TYPE_EXEC] = $3;
++		}
++		| MENUTITLE GROUP STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_GROUP]);
++			conf->menutitle[CWM_MENU_TYPE_GROUP] = $3;
++		}
++		| MENUTITLE LABEL STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_LABEL]);
++			conf->menutitle[CWM_MENU_TYPE_LABEL] = $3;
++		}
++		| MENUTITLE SSH STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_SSH]);
++			conf->menutitle[CWM_MENU_TYPE_SSH] = $3;
++		}
++		| MENUTITLE WINDOW STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_WINDOW]);
++			conf->menutitle[CWM_MENU_TYPE_WINDOW] = $3;
++		}
++		| MENUTITLE WM STRING {
++			free(conf->menutitle[CWM_MENU_TYPE_WM]);
++			conf->menutitle[CWM_MENU_TYPE_WM] = $3;
++		}
++		| MENUPREFIX STRING {
++			free(conf->menuprefix);
++			conf->menuprefix = $2;
++		}
++		| MENUSUFFIX STRING {
++			free(conf->menusuffix);
++			conf->menusuffix = $2;
++		}
+ 		;
+ 
+ color		: COLOR colors
+@@ -322,31 +396,48 @@ lookup(char *s)
+ 	/* this has to be sorted always */
+ 	static const struct keywords keywords[] = {
+ 		{ "activeborder",	ACTIVEBORDER},
++		{ "application",	APPLICATION},
+ 		{ "autogroup",		AUTOGROUP},
+ 		{ "bind-key",		BINDKEY},
+ 		{ "bind-mouse",		BINDMOUSE},
+ 		{ "borderwidth",	BORDERWIDTH},
+ 		{ "color",		COLOR},
+ 		{ "command",		COMMAND},
++		{ "exec",		EXEC},
+ 		{ "font",		FONTCOLOR},
+ 		{ "fontname",		FONTNAME},
+ 		{ "gap",		GAP},
++		{ "group",		GROUP},
+ 		{ "groupborder",	GROUPBORDER},
+ 		{ "htile",		HTILE},
+ 		{ "ignore",		IGNORE},
+ 		{ "inactiveborder",	INACTIVEBORDER},
++		{ "label",		LABEL},
+ 		{ "menubg",		MENUBG},
++		{ "menucenter",		MENUCENTER},
+ 		{ "menufg",		MENUFG},
++		{ "menuindent",		MENUINDENT},
++		{ "menuitemheight",	MENUITEMHEIGHT},
++		{ "menumaxitems",	MENUMAXITEMS},
++		{ "menupos",		MENUPOS},
++		{ "menuprefix",		MENUPREFIX},
++		{ "menusuffix",		MENUSUFFIX},
++		{ "menutitle",		MENUTITLE},
++		{ "menutitlefontname",	MENUTITLEFONTNAME},
++		{ "menutitleheight",	MENUTITLEHEIGHT},
++		{ "menuwidth",		MENUWIDTH},
+ 		{ "moveamount",		MOVEAMOUNT},
+ 		{ "no",			NO},
+ 		{ "selfont", 		FONTSELCOLOR},
+ 		{ "snapdist",		SNAPDIST},
++		{ "ssh", 		SSH},
+ 		{ "sticky",		STICKY},
+ 		{ "unbind-key",		UNBINDKEY},
+ 		{ "unbind-mouse",	UNBINDMOUSE},
+ 		{ "ungroupborder",	UNGROUPBORDER},
+ 		{ "urgencyborder",	URGENCYBORDER},
+ 		{ "vtile",		VTILE},
++		{ "window",		WINDOW},
+ 		{ "wm",			WM},
+ 		{ "yes",		YES}
+ 	};

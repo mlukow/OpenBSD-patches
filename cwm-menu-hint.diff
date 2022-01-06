@@ -1,0 +1,17 @@
+diff --git a/menu.c b/menu.c
+index 1d84ab7..2f41f27 100644
+--- a/menu.c
++++ b/menu.c
+@@ -121,6 +121,12 @@ menu_filter(struct screen_ctx *sc, struct menu_q *menuq, const char *prompt,
+ 	mc.xftdraw = XftDrawCreate(X_Dpy, mc.win,
+ 	    sc->visual, sc->colormap);
+ 
++	XClassHint *hint = XAllocClassHint();
++	hint->res_name = xstrdup(Conf.wmname);
++	hint->res_class = xstrdup(Conf.wmname);
++	XSetClassHint(X_Dpy, mc.win, hint);
++	XFree(hint);
++
+ 	XSelectInput(X_Dpy, mc.win, MENUMASK);
+ 	XMapRaised(X_Dpy, mc.win);
+ 

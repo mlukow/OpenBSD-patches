@@ -1,0 +1,76 @@
+diff --git a/calmwm.c b/calmwm.c
+index ea017e1..8ccfbfd 100644
+--- a/calmwm.c
++++ b/calmwm.c
+@@ -103,6 +103,11 @@ main(int argc, char **argv)
+ 	if (nflag)
+ 		return 0;
+ 
++	if (Conf.log) {
++		setlogmask(LOG_UPTO(LOG_NOTICE));
++		openlog("cwm", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_LOCAL1);
++	}
++
+ 	xfd = x_init(display_name);
+ 	cwm_status = CWM_RUNNING;
+ 
+@@ -128,6 +133,9 @@ main(int argc, char **argv)
+ 		u_exec(fallback);
+ 	}
+ 
++	if (Conf.log)
++		closelog();
++
+ 	return 0;
+ }
+ 
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..5ef1aa2 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -23,6 +23,7 @@
+ 
+ #include <sys/param.h>
+ #include <stdio.h>
++#include <syslog.h>
+ #include "queue.h"
+ 
+ /* prototypes for portable-included functions */
+@@ -325,6 +326,7 @@ struct conf {
+ 	char			*known_hosts;
+ 	char			*wm_argv;
+ 	int			 debug;
++	int			 log;
+ };
+ 
+ /* MWM hints */
+diff --git a/parse.y b/parse.y
+index 383b2dd..8b9a616 100644
+--- a/parse.y
++++ b/parse.y
+@@ -80,6 +80,7 @@ typedef struct {
+ %token	MENUBG MENUFG
+ %token	FONTCOLOR FONTSELCOLOR
+ %token	ERROR
++%token	LOG
+ %token	<v.string>		STRING
+ %token	<v.number>		NUMBER
+ %type	<v.number>		yesno
+@@ -117,6 +118,9 @@ main		: FONTNAME STRING		{
+ 		| STICKY yesno {
+ 			conf->stickygroups = $2;
+ 		}
++		| LOG yesno {
++			conf->log = $2;
++		}
+ 		| BORDERWIDTH NUMBER {
+ 			if ($2 < 0 || $2 > INT_MAX) {
+ 				yyerror("invalid borderwidth");
+@@ -335,6 +339,7 @@ lookup(char *s)
+ 		{ "htile",		HTILE},
+ 		{ "ignore",		IGNORE},
+ 		{ "inactiveborder",	INACTIVEBORDER},
++		{ "log",		LOG},
+ 		{ "menubg",		MENUBG},
+ 		{ "menufg",		MENUFG},
+ 		{ "moveamount",		MOVEAMOUNT},
