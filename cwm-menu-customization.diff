@@ -1,5 +1,5 @@
 diff --git a/calmwm.h b/calmwm.h
-index 95e3c8d..8af13e6 100644
+index 95e3c8d..3ab846d 100644
 --- a/calmwm.h
 +++ b/calmwm.h
 @@ -114,6 +114,17 @@ enum color {
@@ -40,7 +40,7 @@ index 95e3c8d..8af13e6 100644
  struct conf {
  	struct keybind_q	 keybindq;
  	struct mousebind_q	 mousebindq;
-@@ -306,6 +323,17 @@ struct conf {
+@@ -306,6 +323,18 @@ struct conf {
  	struct ignore_q		 ignoreq;
  	struct cmd_q		 cmdq;
  	struct wm_q		 wmq;
@@ -49,6 +49,7 @@ index 95e3c8d..8af13e6 100644
 +	int			 menuindent;
 +	int			 menuitemheight;
 +	struct menupos		*menupos;
++	int			 menuunderline;
 +	int			 menuwidth;
 +	char			*menutitle[CWM_MENU_TYPE_NITEMS];
 +	char			*menutitlefont;
@@ -59,7 +60,7 @@ index 95e3c8d..8af13e6 100644
  	int			 stickygroups;
  	int			 nameqlen;
 diff --git a/conf.c b/conf.c
-index 53ca295..894c586 100644
+index 53ca295..d4429ec 100644
 --- a/conf.c
 +++ b/conf.c
 @@ -68,6 +68,15 @@ static const char *color_binds[] = {
@@ -78,7 +79,7 @@ index 53ca295..894c586 100644
  static const struct {
  	const char	*tag;
  	void		 (*handler)(void *, struct cargs *);
-@@ -287,6 +296,14 @@ conf_init(struct conf *c)
+@@ -287,6 +296,16 @@ conf_init(struct conf *c)
  	c->ngroups = 0;
  	c->nameqlen = 5;
  
@@ -90,10 +91,12 @@ index 53ca295..894c586 100644
 +	c->menupos = NULL;
 +	c->menuwidth = 0;
 +
++	c->menuunderline = 0;
++
  	TAILQ_INIT(&c->ignoreq);
  	TAILQ_INIT(&c->autogroupq);
  	TAILQ_INIT(&c->keybindq);
-@@ -303,6 +320,12 @@ conf_init(struct conf *c)
+@@ -303,6 +322,12 @@ conf_init(struct conf *c)
  	for (i = 0; i < nitems(color_binds); i++)
  		c->color[i] = xstrdup(color_binds[i]);
  
@@ -106,7 +109,7 @@ index 53ca295..894c586 100644
  	conf_cmd_add(c, "lock", "xlock");
  	conf_cmd_add(c, "term", "xterm");
  	conf_wm_add(c, "cwm", "cwm");
-@@ -486,6 +509,23 @@ conf_screen(struct screen_ctx *sc)
+@@ -486,6 +511,23 @@ conf_screen(struct screen_ctx *sc)
  			errx(1, "%s: XftFontOpenName: %s", __func__, Conf.font);
  	}
  
@@ -131,10 +134,10 @@ index 53ca295..894c586 100644
  		if (i == CWM_COLOR_MENU_FONT_SEL && *Conf.color[i] == '\0') {
  			xu_xorcolor(sc->xftcolor[CWM_COLOR_MENU_BG],
 diff --git a/cwmrc.5 b/cwmrc.5
-index ab70d25..3914d22 100644
+index ab70d25..9476a57 100644
 --- a/cwmrc.5
 +++ b/cwmrc.5
-@@ -194,6 +194,72 @@ The default is 50.
+@@ -194,6 +194,75 @@ The default is 50.
  Ignore, and do not warp to, windows with the name
  .Ar windowname
  when drawing borders and cycling through windows.
@@ -148,6 +151,9 @@ index ab70d25..3914d22 100644
 +centered.
 +.It Ic menuindent Ar pixels
 +If
++.It Ic menuunderline Ic yes Ns \&| Ns Ic no
++If enabled, it draws a line under all menu titles if the number
++of displayed items is greater than zero. Defaults to no.
 +.Dq menuwidth
 +is set, this setting will set the left ident of all menu items.
 +If not, it will set both left and right indent.
@@ -290,7 +296,7 @@ index 2d5d1ce..7b67e19 100644
  	if (!mi->abort) {
  		free(cc->label);
 diff --git a/menu.c b/menu.c
-index 1d84ab7..425faf3 100644
+index 1d84ab7..3c954b6 100644
 --- a/menu.c
 +++ b/menu.c
 @@ -34,9 +34,6 @@
@@ -342,7 +348,7 @@ index 1d84ab7..425faf3 100644
  		mc->num++;
  	}
  
-@@ -375,35 +374,49 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
+@@ -375,35 +374,53 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
  	xsave = mc->geom.x;
  	ysave = mc->geom.y;
  
@@ -404,6 +410,10 @@ index 1d84ab7..425faf3 100644
 +			sc->xftmenutitlefont->height) / 2 + sc->xftmenutitlefont->ascent,
  	    (const FcChar8*)mc->dispstr, strlen(mc->dispstr));
  
++	if (Conf.menuunderline && (mc->num > 0))
++		XftDrawRect(mc->xftdraw, &sc->xftcolor[CWM_COLOR_MENU_FG], 0,
++				sc->xftfont->height - 1, mc->geom.w, 1);
++
  	TAILQ_FOREACH(mi, resultq, resultentry) {
 -		int y = n * (sc->xftfont->height + 1) + sc->xftfont->ascent + 1;
 +		int y = Conf.menutitleheight +
@@ -411,7 +421,7 @@ index 1d84ab7..425faf3 100644
  
  		/* Stop drawing when menu doesn't fit inside the screen. */
  		if (mc->geom.y + y > area.h)
-@@ -411,12 +424,15 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
+@@ -411,12 +428,15 @@ menu_draw(struct menu_ctx *mc, struct menu_q *menuq, struct menu_q *resultq)
  
  		XftDrawStringUtf8(mc->xftdraw,
  		    &sc->xftcolor[CWM_COLOR_MENU_FONT], sc->xftfont,
@@ -430,7 +440,7 @@ index 1d84ab7..425faf3 100644
  }
  
  static void
-@@ -425,7 +441,7 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
+@@ -425,7 +445,7 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
  {
  	struct screen_ctx	*sc = mc->sc;
  	struct menu		*mi;
@@ -439,7 +449,7 @@ index 1d84ab7..425faf3 100644
  
  	TAILQ_FOREACH(mi, resultq, resultentry)
  		if (entry == i++)
-@@ -435,12 +451,14 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
+@@ -435,12 +455,14 @@ menu_draw_entry(struct menu_ctx *mc, struct menu_q *resultq,
  
  	color = (active) ? CWM_COLOR_MENU_FG : CWM_COLOR_MENU_BG;
  	XftDrawRect(mc->xftdraw, &sc->xftcolor[color], 0,
@@ -458,7 +468,7 @@ index 1d84ab7..425faf3 100644
  	    (const FcChar8*)mi->print, strlen(mi->print));
  }
  
-@@ -453,7 +471,12 @@ menu_handle_move(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
+@@ -453,7 +475,12 @@ menu_handle_move(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
  	if (mc->prev == mc->entry)
  		return;
  
@@ -472,7 +482,7 @@ index 1d84ab7..425faf3 100644
  		menu_draw_entry(mc, resultq, mc->prev, 0);
  	if (mc->entry != -1) {
  		XChangeActivePointerGrab(X_Dpy, MENUGRABMASK,
-@@ -484,18 +507,15 @@ menu_handle_release(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
+@@ -484,18 +511,15 @@ menu_handle_release(struct menu_ctx *mc, struct menu_q *resultq, int x, int y)
  static int
  menu_calc_entry(struct menu_ctx *mc, int x, int y)
  {
@@ -498,7 +508,7 @@ index 1d84ab7..425faf3 100644
  
  	return entry;
 diff --git a/parse.y b/parse.y
-index 383b2dd..42bf594 100644
+index 383b2dd..f93d6ab 100644
 --- a/parse.y
 +++ b/parse.y
 @@ -78,8 +78,12 @@ typedef struct {
@@ -507,7 +517,7 @@ index 383b2dd..42bf594 100644
  %token	MENUBG MENUFG
 +%token	MENUCENTER MENUPOS MENUWIDTH MENUTITLE MENUTITLEFONTNAME
 +%token	MENUMAXITEMS MENUPREFIX MENUSUFFIX MENUTITLEHEIGHT
-+%token	MENUITEMHEIGHT MENUINDENT
++%token	MENUITEMHEIGHT MENUINDENT MENUUNDERLINE
  %token	FONTCOLOR FONTSELCOLOR
  %token	ERROR
 +%token	APPLICATION EXEC GROUP LABEL SSH WINDOW
@@ -529,7 +539,7 @@ index 383b2dd..42bf594 100644
  		}
  		| STICKY yesno {
  			conf->stickygroups = $2;
-@@ -247,6 +256,71 @@ main		: FONTNAME STRING		{
+@@ -247,6 +256,74 @@ main		: FONTNAME STRING		{
  			}
  			free($2);
  		}
@@ -598,10 +608,13 @@ index 383b2dd..42bf594 100644
 +			free(conf->menusuffix);
 +			conf->menusuffix = $2;
 +		}
++		| MENUUNDERLINE yesno {
++			conf->menuunderline = $2;
++		}
  		;
  
  color		: COLOR colors
-@@ -322,31 +396,48 @@ lookup(char *s)
+@@ -322,31 +399,49 @@ lookup(char *s)
  	/* this has to be sorted always */
  	static const struct keywords keywords[] = {
  		{ "activeborder",	ACTIVEBORDER},
@@ -634,6 +647,7 @@ index 383b2dd..42bf594 100644
 +		{ "menutitle",		MENUTITLE},
 +		{ "menutitlefontname",	MENUTITLEFONTNAME},
 +		{ "menutitleheight",	MENUTITLEHEIGHT},
++		{ "menuunderline",	MENUUNDERLINE},
 +		{ "menuwidth",		MENUWIDTH},
  		{ "moveamount",		MOVEAMOUNT},
  		{ "no",			NO},

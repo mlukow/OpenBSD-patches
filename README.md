@@ -45,6 +45,7 @@ Adds a multitude of options to customize the look and feel of the menus:
 * `menutitle type string`: Override the default title of the menu type with string.  The type can be one of `application` `exec` `group`, `label`, `ssh`, `window` or `wm`.
 * `menutitlefontname font`: If set, it overrides the default `font` setting for the menu title and the search phrase.
 * `menutitleheight pixels`: Set the height of the menu header to pixels.  If not set, it defaults to the height of the `menutitlefontname` or `fontname`.
+* `menuunderline yes|no`: If enabled, it draws a line under all menu titles if the number of displayed items is greater than zero. Defaults to no.
 * `menuwidth pixels`: Set width of the menu to pixels.  If not set, it defaults to the widest menu item plus twice the `menuindent` if set.
 
 ![cwm-menu-customization](assets/cwm-menu-customization.png)
