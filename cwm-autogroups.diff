@@ -1,0 +1,317 @@
+diff --git a/calmwm.h b/calmwm.h
+index 95e3c8d..32e1929 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -210,6 +210,7 @@ struct autogroup {
+ 	char			*class;
+ 	char			*name;
+ 	int 			 num;
++	int 			 automatic;
+ };
+ TAILQ_HEAD(autogroup_q, autogroup);
+ 
+@@ -299,6 +300,12 @@ struct menu {
+ };
+ TAILQ_HEAD(menu_q, menu);
+ 
++enum autogrouptype {
++	CWM_AUTOGROUP_TYPE_NONE,
++	CWM_AUTOGROUP_TYPE_CLASS,
++	CWM_AUTOGROUP_TYPE_NAME
++};
++
+ struct conf {
+ 	struct keybind_q	 keybindq;
+ 	struct mousebind_q	 mousebindq;
+@@ -307,6 +314,7 @@ struct conf {
+ 	struct cmd_q		 cmdq;
+ 	struct wm_q		 wmq;
+ 	int			 ngroups;
++	enum autogrouptype	 autogrouptype;
+ 	int			 stickygroups;
+ 	int			 nameqlen;
+ 	int			 bwidth;
+@@ -549,7 +557,7 @@ void			 menuq_clear(struct menu_q *);
+ int			 parse_config(const char *, struct conf *);
+ 
+ void			 conf_autogroup(struct conf *, int, const char *,
+-			     const char *);
++			     const char *, int);
+ int			 conf_bind_key(struct conf *, const char *,
+     			     const char *);
+ int			 conf_bind_mouse(struct conf *, const char *,
+diff --git a/client.c b/client.c
+index f9262f8..b665a17 100644
+--- a/client.c
++++ b/client.c
+@@ -132,7 +132,8 @@ client_init(Window win, struct screen_ctx *sc)
+ 			group_movetogroup(cc, cc->gc->num);
+ 			goto out;
+ 		}
+-		if (group_restore(cc))
++		if ((Conf.autogrouptype == CWM_AUTOGROUP_TYPE_NONE) &&
++			group_restore(cc))
+ 			goto out;
+ 		if (group_autogroup(cc))
+ 			goto out;
+@@ -208,8 +209,11 @@ client_prev(struct client_ctx *cc)
+ void
+ client_remove(struct client_ctx *cc)
+ {
++	struct autogroup	*ag;
++	struct client_ctx	*ci;
+ 	struct screen_ctx	*sc = cc->sc;
+ 	struct winname		*wn;
++	int			 count = 0;
+ 
+ 	TAILQ_REMOVE(&sc->clientq, cc, entry);
+ 
+@@ -225,6 +229,23 @@ client_remove(struct client_ctx *cc)
+ 		free(wn);
+ 	}
+ 
++	if (Conf.autogrouptype != CWM_AUTOGROUP_TYPE_NONE) {
++		TAILQ_FOREACH(ci, &sc->clientq, entry) {
++			if (ci->gc == cc->gc)
++				count++;
++		}
++
++		if (count == 0) {
++			TAILQ_REMOVE(&sc->groupq, cc->gc, entry);
++			TAILQ_FOREACH(ag, &Conf.autogroupq, entry) {
++				if (ag->num == cc->gc->num) {
++					TAILQ_REMOVE(&Conf.autogroupq, ag, entry);
++					break;
++				}
++			}
++		}
++	}
++
+ 	free(cc->name);
+ 	free(cc->label);
+ 	free(cc->res_class);
+diff --git a/conf.c b/conf.c
+index 53ca295..6bfacd4 100644
+--- a/conf.c
++++ b/conf.c
+@@ -278,6 +278,7 @@ conf_init(struct conf *c)
+ 	struct passwd	*pw;
+ 	unsigned int	i;
+ 
++	c->autogrouptype = CWM_AUTOGROUP_TYPE_NONE;
+ 	c->stickygroups = 0;
+ 	c->bwidth = 1;
+ 	c->mamount = 1;
+@@ -412,7 +413,8 @@ conf_wm_add(struct conf *c, const char *name, const char *path)
+ }
+ 
+ void
+-conf_autogroup(struct conf *c, int num, const char *name, const char *class)
++conf_autogroup(struct conf *c, int num, const char *name, const char *class,
++		int automatic)
+ {
+ 	struct autogroup	*ag;
+ 	char			*p;
+@@ -435,9 +437,23 @@ conf_autogroup(struct conf *c, int num, const char *name, const char *class)
+ 		ag->class = xstrdup(p);
+ 	}
+ 	ag->num = num;
++	ag->automatic = automatic;
+ 	TAILQ_INSERT_TAIL(&c->autogroupq, ag, entry);
+ }
+ 
++void
++conf_autogroup_remove(struct conf *c, int num)
++{
++	struct autogroup *ag;
++
++	TAILQ_FOREACH(ag, &Conf.autogroupq, entry) {
++		if (ag->num == num) {
++			TAILQ_REMOVE(&Conf.autogroupq, ag, entry);
++			break;
++		}
++	}
++}
++
+ void
+ conf_ignore(struct conf *c, const char *name)
+ {
+diff --git a/cwmrc.5 b/cwmrc.5
+index ab70d25..2951689 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
+@@ -60,6 +60,14 @@ used to override
+ The name and class values, respectively, for existing windows
+ are both set in the WM_CLASS property and may be obtained using
+ .Xr xprop 1 .
++.It Ic autogroups Ar type
++Automatically groups new windows based on their
++.Ar type ,
++which can be either
++.Dq class ,
++meaning that the groups will be created based on the WM_CLASS property, or
++.Dq name ,
++meaning that the groups will be created based on the WM_NAME property.
+ .It Ic bind-key Ar key function
+ Bind or rebind key
+ .Ar key
+diff --git a/group.c b/group.c
+index 59eae73..dd3032c 100644
+--- a/group.c
++++ b/group.c
+@@ -40,8 +40,9 @@ static void		 group_set_active(struct group_ctx *);
+ void
+ group_assign(struct group_ctx *gc, struct client_ctx *cc)
+ {
+-	if ((gc != NULL) && (gc->num == 0))
++	if ((gc != NULL) && (gc->num == 0)) {
+ 		gc = NULL;
++	}
+ 
+ 	cc->gc = gc;
+ 
+@@ -125,13 +126,26 @@ group_restack(struct group_ctx *gc)
+ void
+ group_init(struct screen_ctx *sc, int num, const char *name)
+ {
++	struct group_ctx	*gi;
+ 	struct group_ctx	*gc;
+ 
+ 	gc = xmalloc(sizeof(*gc));
+ 	gc->sc = sc;
+ 	gc->name = xstrdup(name);
+ 	gc->num = num;
+-	TAILQ_INSERT_TAIL(&sc->groupq, gc, entry);
++	if (TAILQ_FIRST(&sc->groupq)) {
++		TAILQ_FOREACH(gi, &sc->groupq, entry) {
++			if (gi->num < num) {
++				if (!TAILQ_NEXT(gi, entry) ||
++					(TAILQ_NEXT(gi, entry)->num > num)) {
++					TAILQ_INSERT_AFTER(&sc->groupq, gi, gc, entry);
++					break;
++				}
++			}
++		}
++	} else {
++		TAILQ_INSERT_TAIL(&sc->groupq, gc, entry);
++	}
+ 
+ 	if (num == 1)
+ 		group_set_active(gc);
+@@ -349,12 +363,14 @@ group_autogroup(struct client_ctx *cc)
+ 	struct screen_ctx	*sc = cc->sc;
+ 	struct autogroup	*ag;
+ 	struct group_ctx	*gc;
+-	int			 num = -1, both_match = 0;
++	int			 num = -1, both_match = 0, autonum = 10;
+ 
+ 	if (cc->res_class == NULL || cc->res_name == NULL)
+ 		return 0;
+ 
+ 	TAILQ_FOREACH(ag, &Conf.autogroupq, entry) {
++		if (ag->num == autonum)
++			autonum++; // we can do this because the list is sorted
+ 		if (strcmp(ag->class, cc->res_class) == 0) {
+ 			if ((ag->name != NULL) &&
+ 			    (strcmp(ag->name, cc->res_name) == 0)) {
+@@ -371,5 +387,19 @@ group_autogroup(struct client_ctx *cc)
+ 			return 1;
+ 		}
+ 	}
+-	return 0;
++
++	if (autonum == -1)
++		autonum = 10; // groups 0-9 are hardcoded
++
++	if (Conf.autogrouptype == CWM_AUTOGROUP_TYPE_CLASS) {
++		conf_autogroup(&Conf, autonum, cc->res_name, cc->res_class, 1);
++		group_init(sc, autonum, cc->name);
++	} else if (Conf.autogrouptype == CWM_AUTOGROUP_TYPE_NAME) {
++		conf_autogroup(&Conf, autonum, cc->res_name, cc->res_class, 1);
++		group_init(sc, autonum, cc->name);
++	}
++
++	Conf.ngroups++;
++
++	return group_autogroup(cc);
+ }
+diff --git a/parse.y b/parse.y
+index 383b2dd..a2c72bb 100644
+--- a/parse.y
++++ b/parse.y
+@@ -72,7 +72,8 @@ typedef struct {
+ 
+ %token	BINDKEY UNBINDKEY BINDMOUSE UNBINDMOUSE
+ %token	FONTNAME STICKY GAP
+-%token	AUTOGROUP COMMAND IGNORE WM
++%token	AUTOGROUP AUTOGROUPS COMMAND IGNORE WM
++%token	CLASS NAME NONE
+ %token	YES NO BORDERWIDTH MOVEAMOUNT HTILE VTILE
+ %token	COLOR SNAPDIST
+ %token	ACTIVEBORDER INACTIVEBORDER URGENCYBORDER
+@@ -82,6 +83,7 @@ typedef struct {
+ %token	ERROR
+ %token	<v.string>		STRING
+ %token	<v.number>		NUMBER
++%type	<v.number>		autogrouptype
+ %type	<v.number>		yesno
+ %type	<v.string>		string
+ %%
+@@ -110,6 +112,11 @@ yesno		: YES				{ $$ = 1; }
+ 		| NO				{ $$ = 0; }
+ 		;
+ 
++autogrouptype	: NONE			{ $$ = CWM_AUTOGROUP_TYPE_NONE; }
++		| CLASS			{ $$ = CWM_AUTOGROUP_TYPE_CLASS; }
++		| NAME			{ $$ = CWM_AUTOGROUP_TYPE_NAME; }
++		;
++
+ main		: FONTNAME STRING		{
+ 			free(conf->font);
+ 			conf->font = $2;
+@@ -180,7 +187,7 @@ main		: FONTNAME STRING		{
+ 				free($3);
+ 				YYERROR;
+ 			}
+-			conf_autogroup(conf, $2, NULL, $3);
++			conf_autogroup(conf, $2, NULL, $3, 0);
+ 			free($3);
+ 		}
+ 		| AUTOGROUP NUMBER STRING ',' STRING {
+@@ -190,10 +197,13 @@ main		: FONTNAME STRING		{
+ 				free($5);
+ 				YYERROR;
+ 			}
+-			conf_autogroup(conf, $2, $3, $5);
++			conf_autogroup(conf, $2, $3, $5, 0);
+ 			free($3);
+ 			free($5);
+ 		}
++		| AUTOGROUPS autogrouptype {
++			conf->autogrouptype = $2;
++		}
+ 		| IGNORE STRING {
+ 			conf_ignore(conf, $2);
+ 			free($2);
+@@ -323,9 +333,11 @@ lookup(char *s)
+ 	static const struct keywords keywords[] = {
+ 		{ "activeborder",	ACTIVEBORDER},
+ 		{ "autogroup",		AUTOGROUP},
++		{ "autogroups",		AUTOGROUPS},
+ 		{ "bind-key",		BINDKEY},
+ 		{ "bind-mouse",		BINDMOUSE},
+ 		{ "borderwidth",	BORDERWIDTH},
++		{ "class",		CLASS},
+ 		{ "color",		COLOR},
+ 		{ "command",		COMMAND},
+ 		{ "font",		FONTCOLOR},
+@@ -338,7 +350,9 @@ lookup(char *s)
+ 		{ "menubg",		MENUBG},
+ 		{ "menufg",		MENUFG},
+ 		{ "moveamount",		MOVEAMOUNT},
++		{ "name",		NAME},
+ 		{ "no",			NO},
++		{ "none",		NONE},
+ 		{ "selfont", 		FONTSELCOLOR},
+ 		{ "snapdist",		SNAPDIST},
+ 		{ "sticky",		STICKY},

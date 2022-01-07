@@ -49,6 +49,12 @@ Adds a multitude of options to customize the look and feel of the menus:
 
 ![cwm-menu-customization](assets/cwm-menu-customization.png)
 
+### cwm-autogroups.diff
+
+Automatically groups new windows based on their type, which can be either “class”, meaning that the groups will be created based on the `WM_CLASS` property, or “name”, meaning that the groups will be created based on the `WM_NAME` property.
+
+![cwm-autogroups](assets/cwm-autogroups.png)
+
 ### ksh-ignorecase.diff
 
 Adds new `ignorecase` property which, when enabled, makes tab completions case insensntive
