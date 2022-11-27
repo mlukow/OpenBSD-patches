@@ -50,6 +50,12 @@ Adds a multitude of options to customize the look and feel of the menus:
 
 ![cwm-menu-customization](assets/cwm-menu-customization.png)
 
+### cwm-resizeallcorners.diff
+
+Adds new configuration option `resizeallcorners (yes|no)` to set the resizing behavior. `no` is the default and it is the old behavior of snapping the mouse cursor to the bottom right corner and resizing south east. If set to `yes` allows resizing windows in all directions, depending on which corner the mouse cursor was closest to.
+
+![cwm-resizeallcorners demo](assets/cwm-resizeallcorners.gif)
+
 ### cwm-autogroups.diff
 
 Automatically groups new windows based on their type, which can be either “class”, meaning that the groups will be created based on the `WM_CLASS` property, or “name”, meaning that the groups will be created based on the `WM_NAME` property.

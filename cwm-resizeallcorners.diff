@@ -1,0 +1,259 @@
+diff --git a/calmwm.h b/calmwm.h
+index b3992c3..4665cd1 100644
+--- a/calmwm.h
++++ b/calmwm.h
+@@ -98,6 +98,10 @@ enum cursor_font {
+ 	CF_NORMAL,
+ 	CF_MOVE,
+ 	CF_RESIZE,
++	CF_RESIZE_NE,
++	CF_RESIZE_NW,
++	CF_RESIZE_SE,
++	CF_RESIZE_SW,
+ 	CF_QUESTION,
+ 	CF_NITEMS
+ };
+@@ -309,6 +313,7 @@ struct conf {
+ 	struct wm_q		 wmq;
+ 	int			 ngroups;
+ 	int			 stickygroups;
++	int			 resizeallcorners;
+ 	int			 nameqlen;
+ 	int			 bwidth;
+ 	int			 mamount;
+diff --git a/conf.c b/conf.c
+index 7d3ae6e..8df1bdf 100644
+--- a/conf.c
++++ b/conf.c
+@@ -55,6 +55,10 @@ static int cursor_binds[] = {
+ 	XC_left_ptr,		/* CF_NORMAL */
+ 	XC_fleur,		/* CF_MOVE */
+ 	XC_bottom_right_corner,	/* CF_RESIZE */
++	XC_top_right_corner,	/* CF_RESIZE_NE */
++	XC_top_left_corner,	/* CF_RESIZE_NW */
++	XC_bottom_right_corner,	/* CF_RESIZE_SE */
++	XC_bottom_left_corner,	/* CF_RESIZE_SW */
+ 	XC_question_arrow,	/* CF_QUESTION */
+ };
+ static const char *color_binds[] = {
+@@ -280,6 +284,7 @@ conf_init(struct conf *c)
+ 	unsigned int	i;
+ 
+ 	c->stickygroups = 0;
++	c->resizeallcorners = 0;
+ 	c->bwidth = 1;
+ 	c->mamount = 1;
+ 	c->htile = 50;
+diff --git a/cwmrc.5 b/cwmrc.5
+index 7075288..086d783 100644
+--- a/cwmrc.5
++++ b/cwmrc.5
+@@ -207,6 +207,12 @@ The default behavior for new windows is to not assign any group.
+ By enabling sticky group mode,
+ .Xr cwm 1
+ will assign new windows to the currently selected group.
++.It Ic resizeallcorners Ic yes Ns \&| Ns Ic no
++Toggle resizing windows from all corners.
++The default behavior is to only resize from the bottom right corner.
++By enabling this mode,
++.Xr cwm 1
++will resize windows towards the closest corner.
+ .It Ic unbind-key Ar key
+ Unbind function bound to
+ .Ar key .
+diff --git a/kbfunc.c b/kbfunc.c
+index ed1d7cb..0a923b0 100644
+--- a/kbfunc.c
++++ b/kbfunc.c
+@@ -47,6 +47,8 @@ static void kbfunc_client_move_kb(void *, struct cargs *);
+ static void kbfunc_client_move_mb(void *, struct cargs *);
+ static void kbfunc_client_resize_kb(void *, struct cargs *);
+ static void kbfunc_client_resize_mb(void *, struct cargs *);
++static void kbfunc_client_resize_mb_original(struct screen_ctx *, struct client_ctx *);
++static void kbfunc_client_resize_mb_corners(struct screen_ctx *, struct client_ctx *);
+ 
+ void
+ kbfunc_cwm_status(void *ctx, struct cargs *cargs)
+@@ -236,15 +238,11 @@ kbfunc_client_resize_kb(void *ctx, struct cargs *cargs)
+ 	client_ptr_inbound(cc, 1);
+ 	XSync(X_Dpy, True);
+ }
+-
+ static void
+ kbfunc_client_resize_mb(void *ctx, struct cargs *cargs)
+ {
+ 	struct client_ctx	*cc = ctx;
+-	XEvent			 ev;
+-	Time			 ltime = 0;
+ 	struct screen_ctx	*sc = cc->sc;
+-	int			 resize = 1;
+ 
+ 	if (cc->flags & CLIENT_FREEZE)
+ 		return;
+@@ -252,6 +250,22 @@ kbfunc_client_resize_mb(void *ctx, struct cargs *cargs)
+ 	client_raise(cc);
+ 	client_ptr_save(cc);
+ 
++	if (Conf.resizeallcorners)
++		kbfunc_client_resize_mb_corners(sc, cc);
++	else
++		kbfunc_client_resize_mb_original(sc, cc);
++
++	/* Make sure the pointer stays within the window. */
++	client_ptr_inbound(cc, 0);
++}
++
++static void
++kbfunc_client_resize_mb_original(struct screen_ctx *sc, struct client_ctx *cc)
++{
++	int resize = 1;
++	Time ltime = 0;
++	XEvent ev;
++
+ 	xu_ptr_set(cc->win, cc->geom.w, cc->geom.h);
+ 
+ 	if (XGrabPointer(X_Dpy, cc->win, False, MOUSEMASK,
+@@ -286,11 +300,111 @@ kbfunc_client_resize_mb(void *ctx, struct cargs *cargs)
+ 		client_resize(cc, 1);
+ 	screen_prop_win_destroy(sc);
+ 	XUngrabPointer(X_Dpy, CurrentTime);
++}
+ 
+-	/* Make sure the pointer stays within the window. */
+-	client_ptr_inbound(cc, 0);
++static void
++kbfunc_client_resize_mb_corners(struct screen_ctx *sc, struct client_ctx *cc)
++{
++ Cursor cursor;
++ int resize = 1, orig_h, orig_w, orig_x, orig_y, x, y;
++ Time ltime = 0;
++ XEvent ev;
++
++ xu_ptr_get(sc->rootwin, &x, &y);
++
++ if (x < cc->geom.x + cc->geom.w / 2) {
++  if (y < cc->geom.y + cc->geom.h / 2)
++   cursor = Conf.cursor[CF_RESIZE_NW];
++  else
++   cursor = Conf.cursor[CF_RESIZE_SW];
++ } else {
++  if (y < cc->geom.y + cc->geom.h / 2)
++   cursor = Conf.cursor[CF_RESIZE_NE];
++  else
++   cursor = Conf.cursor[CF_RESIZE_SE];
++ }
++
++ if (XGrabPointer(X_Dpy, cc->win, False, MOUSEMASK,
++      GrabModeAsync, GrabModeAsync, None, cursor,
++   CurrentTime) != GrabSuccess)
++  return;
++
++ orig_x = cc->geom.x;
++ orig_y = cc->geom.y;
++ orig_w = cc->geom.w;
++ orig_h = cc->geom.h;
++ orig_x = cc->geom.x;
++ orig_y = cc->geom.y;
++ orig_w = cc->geom.w;
++ orig_h = cc->geom.h;
++
++ screen_prop_win_create(sc, cc->win);
++ screen_prop_win_draw(sc, "%4d x %-4d", cc->dim.w, cc->dim.h);
++
++ while (resize) {
++  XMaskEvent(X_Dpy, MOUSEMASK, &ev);
++  switch (ev.type) {
++   case MotionNotify:
++    /* not more than 60 times / second */
++    if ((ev.xmotion.time - ltime) <= (1000 / 60))
++     continue;
++    ltime = ev.xmotion.time;
++
++    if (x - orig_x < orig_w / 2) {
++     if (y - orig_y < orig_h / 2) {
++      cc->geom.x = orig_x + ev.xmotion.x_root - x;
++      cc->geom.w = orig_w - ev.xmotion.x_root + x;
++      cc->geom.y = orig_y + ev.xmotion.y_root - y;
++      cc->geom.h = orig_h - ev.xmotion.y_root + y;
++
++      client_apply_sizehints(cc);
++
++      cc->geom.x -= cc->geom.x + cc->geom.w - orig_x - orig_w;
++      cc->geom.y -= cc->geom.y + cc->geom.h - orig_y - orig_h;
++     } else {
++      cc->geom.x = orig_x + ev.xmotion.x_root - x;
++      cc->geom.w = orig_w - ev.xmotion.x_root + x;
++      cc->geom.h = orig_h + ev.xmotion.y_root - y;
++
++      client_apply_sizehints(cc);
++
++      cc->geom.x -= cc->geom.x + cc->geom.w - orig_x - orig_w;
++     }
++    } else {
++     if (y - orig_y < orig_h / 2) {
++      cc->geom.w = orig_w + ev.xmotion.x_root - x;
++      cc->geom.y = orig_y + ev.xmotion.y_root - y;
++      cc->geom.h = orig_h - ev.xmotion.y_root + y;
++
++      client_apply_sizehints(cc);
++
++      cc->geom.y -= cc->geom.y + cc->geom.h - orig_y - orig_h;
++     } else {
++      cc->geom.w = orig_w + ev.xmotion.x_root - x;
++      cc->geom.h = orig_h + ev.xmotion.y_root - y;
++
++      client_apply_sizehints(cc);
++     }
++    }
++
++    client_move(cc);
++    client_resize(cc, 0);
++    screen_prop_win_draw(sc,
++      "%4d x %-4d", cc->dim.w, cc->dim.h);
++    break;
++   case ButtonRelease:
++    resize = 0;
++    break;
++  }
++ }
++
++ if (ltime)
++  client_resize(cc, 1);
++ screen_prop_win_destroy(sc);
++ XUngrabPointer(X_Dpy, CurrentTime);
+ }
+ 
++
+ void
+ kbfunc_client_snap(void *ctx, struct cargs *cargs)
+ {
+diff --git a/parse.y b/parse.y
+index d0407a7..2e18ba6 100644
+--- a/parse.y
++++ b/parse.y
+@@ -80,6 +80,7 @@ typedef struct {
+ %token	MENUBG MENUFG
+ %token	FONTCOLOR FONTSELCOLOR
+ %token	ERROR
++%token  RESIZEALLCORNERS
+ %token	<v.string>		STRING
+ %token	<v.number>		NUMBER
+ %type	<v.number>		yesno
+@@ -258,6 +259,9 @@ main		: FONTNAME STRING		{
+ 			}
+ 			free($2);
+ 		}
++		| RESIZEALLCORNERS yesno {
++			conf->resizeallcorners = $2;
++		}
+ 		;
+ 
+ color		: COLOR colors
+@@ -350,6 +354,7 @@ lookup(char *s)
+ 		{ "menufg",		MENUFG},
+ 		{ "moveamount",		MOVEAMOUNT},
+ 		{ "no",			NO},
++		{ "resizeallcorners", 		RESIZEALLCORNERS},
+ 		{ "selfont", 		FONTSELCOLOR},
+ 		{ "snapdist",		SNAPDIST},
+ 		{ "sticky",		STICKY},
